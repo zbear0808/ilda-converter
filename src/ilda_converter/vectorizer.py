@@ -20,6 +20,113 @@ import svgpathtools
 VectorizerType = Literal["vtracer", "potrace", "centerline"]
 
 
+def trace_skeleton(skeleton_bool: np.ndarray) -> List[np.ndarray]:
+    """
+    Extract single-stroke paths from a 1-pixel skeleton image without doubling.
+    Uses 8-connectivity topological graph traversal.
+    """
+    skel = skeleton_bool.astype(np.uint8)
+    neighbors_offsets = [
+        (-1, -1), (-1, 0), (-1, 1),
+        (0, -1),           (0, 1),
+        (1, -1),  (1, 0),  (1, 1)
+    ]
+
+    y_coords, x_coords = np.where(skel > 0)
+    pixel_set = set(zip(y_coords, x_coords))
+    if not pixel_set:
+        return []
+
+    degree = {}
+    adj = {}
+    for y, x in pixel_set:
+        nbrs = []
+        for dy, dx in neighbors_offsets:
+            ny, nx = y + dy, x + dx
+            if (ny, nx) in pixel_set:
+                nbrs.append((ny, nx))
+        degree[(y, x)] = len(nbrs)
+        adj[(y, x)] = nbrs
+
+    visited_edges = set()
+    paths = []
+
+    # Priority 1: Endpoints (degree == 1)
+    endpoints = [p for p in pixel_set if degree[p] == 1]
+    # Priority 2: Branch points (degree >= 3)
+    branchpoints = [p for p in pixel_set if degree[p] >= 3]
+    start_nodes = endpoints + branchpoints
+
+    for start in start_nodes:
+        for nxt in adj[start]:
+            edge = tuple(sorted([start, nxt]))
+            if edge in visited_edges:
+                continue
+
+            path = [start, nxt]
+            visited_edges.add(edge)
+            prev = start
+            curr = nxt
+
+            while True:
+                if degree[curr] != 2:
+                    break
+                next_candidates = [n for n in adj[curr] if n != prev]
+                if not next_candidates:
+                    break
+                nxt_node = next_candidates[0]
+                edge = tuple(sorted([curr, nxt_node]))
+                if edge in visited_edges:
+                    break
+                visited_edges.add(edge)
+                path.append(nxt_node)
+                prev = curr
+                curr = nxt_node
+
+            if len(path) >= 2:
+                coords = np.array([[x, y] for (y, x) in path], dtype=np.float32)
+                paths.append(coords)
+
+    # Priority 3: Remaining isolated closed loops
+    remaining_pixels = set()
+    for p in pixel_set:
+        unvisited = [n for n in adj[p] if tuple(sorted([p, n])) not in visited_edges]
+        if unvisited:
+            remaining_pixels.add(p)
+
+    while remaining_pixels:
+        start = next(iter(remaining_pixels))
+        unvisited_nbrs = [n for n in adj[start] if tuple(sorted([start, n])) not in visited_edges]
+        if not unvisited_nbrs:
+            remaining_pixels.remove(start)
+            continue
+
+        nxt = unvisited_nbrs[0]
+        edge = tuple(sorted([start, nxt]))
+        visited_edges.add(edge)
+        path = [start, nxt]
+        prev = start
+        curr = nxt
+
+        while curr != start:
+            next_candidates = [n for n in adj[curr] if n != prev and tuple(sorted([curr, n])) not in visited_edges]
+            if not next_candidates:
+                break
+            nxt_node = next_candidates[0]
+            edge = tuple(sorted([curr, nxt_node]))
+            visited_edges.add(edge)
+            path.append(nxt_node)
+            prev = curr
+            curr = nxt_node
+
+        coords = np.array([[x, y] for (y, x) in path], dtype=np.float32)
+        paths.append(coords)
+        for p in path:
+            remaining_pixels.discard(p)
+
+    return paths
+
+
 class Vectorizer:
     """Convert raster images to vector paths."""
 
@@ -27,16 +134,20 @@ class Vectorizer:
         self,
         method: VectorizerType = "centerline",
         simplify_tolerance: float = 1.0,
+        line_thickness: Optional[float] = None,
     ):
         """
         Initialize vectorizer.
 
         Args:
-            method: Vectorization method to use (default: centerline - works on all platforms)
+            method: Vectorization method to use ('vtracer', 'centerline', 'potrace')
             simplify_tolerance: Path simplification tolerance in pixels
+            line_thickness: Max line thickness in pixels to collapse into single centerlines
         """
         self.method = method
         self.simplify_tolerance = simplify_tolerance
+        self.line_thickness = line_thickness
+
 
     def vectorize(
         self,
@@ -148,7 +259,11 @@ class Vectorizer:
             Path(temp_bmp_path).unlink(missing_ok=True)
 
     def _vectorize_centerline(self, image_path: str, output_path: str):
-        """Extract centerlines using skeletonization (best for thin lines)."""
+        """
+        Extract centerlines using topological skeletonization (avoiding double lines).
+        If line_thickness is set, strokes <= line_thickness become single centerlines,
+        while regions > line_thickness keep their outer boundaries.
+        """
         img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             raise ValueError(f"Could not load image: {image_path}")
@@ -157,22 +272,52 @@ class Vectorizer:
             img, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
         )
 
-        binary_bool = binary > 0
-        skeleton = morphology.skeletonize(binary_bool)
-        skeleton_img = img_as_ubyte(skeleton)
-        contours, _ = cv2.findContours(
-            skeleton_img, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
-        )
+        paths = []
+        if self.line_thickness and self.line_thickness > 0:
+            # Distance transform to differentiate lines from solid fills
+            dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+            # Strokes where thickness (2 * dist) <= line_thickness
+            line_mask = (2 * dist <= self.line_thickness) & (binary > 0)
+            fill_mask = (2 * dist > self.line_thickness) & (binary > 0)
 
-        self._contours_to_svg(contours, output_path, img.shape)
+            # 1. Centerlines for lines/strokes
+            if np.any(line_mask):
+                skel = morphology.skeletonize(line_mask)
+                skel_paths = trace_skeleton(skel)
+                paths.extend(skel_paths)
 
-    def _contours_to_svg(
+            # 2. Outlines for thick fills
+            if np.any(fill_mask):
+                fill_ubyte = img_as_ubyte(fill_mask)
+                contours, _ = cv2.findContours(
+                    fill_ubyte, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                )
+                for c in contours:
+                    if len(c) >= 3:
+                        paths.append(c.reshape(-1, 2).astype(np.float32))
+        else:
+            # Skeletonize all foreground strokes to single centerlines
+            binary_bool = binary > 0
+            skel = morphology.skeletonize(binary_bool)
+            paths = trace_skeleton(skel)
+
+        # Simplify extracted paths
+        simplified_paths = []
+        for p in paths:
+            if len(p) < 2:
+                continue
+            approx = cv2.approxPolyDP(p.astype(np.float32), self.simplify_tolerance, False)
+            simplified_paths.append(approx.reshape(-1, 2))
+
+        self._paths_to_svg(simplified_paths, output_path, img.shape)
+
+    def _paths_to_svg(
         self,
-        contours: List[np.ndarray],
+        paths: List[np.ndarray],
         output_path: str,
         image_shape: Tuple[int, int],
     ):
-        """Convert OpenCV contours to SVG file."""
+        """Convert coordinate path arrays to SVG file."""
         height, width = image_shape
 
         svg_lines = [
@@ -180,19 +325,12 @@ class Vectorizer:
             f'width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         ]
 
-        for contour in contours:
-            if len(contour) < 2:
+        for p in paths:
+            if len(p) < 2:
                 continue
-
-            epsilon = self.simplify_tolerance
-            approx = cv2.approxPolyDP(contour, epsilon, closed=False)
-
-            points = approx.reshape(-1, 2)
-            path_d = f"M {points[0][0]},{points[0][1]}"
-
-            for pt in points[1:]:
+            path_d = f"M {p[0][0]},{p[0][1]}"
+            for pt in p[1:]:
                 path_d += f" L {pt[0]},{pt[1]}"
-
             svg_lines.append(
                 f'<path d="{path_d}" fill="none" stroke="black" stroke-width="1"/>'
             )
@@ -205,6 +343,7 @@ class Vectorizer:
     def load_svg(self, svg_path: str) -> List[np.ndarray]:
         """Load and parse paths directly from an existing SVG file."""
         return self._parse_svg_paths(svg_path)
+
 
 
     def _parse_svg_paths(self, svg_path: str) -> List[np.ndarray]:

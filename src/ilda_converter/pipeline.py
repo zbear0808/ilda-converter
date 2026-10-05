@@ -27,6 +27,7 @@ class ILDAConverter:
         galvo_config: Optional[GalvoConfig] = None,
         simplify_tolerance: float = 1.0,
         path_merge_threshold: float = 0.5,
+        line_thickness: float = 25.0,
     ):
         """
         Initialize ILDA converter.
@@ -36,16 +37,21 @@ class ILDAConverter:
             galvo_config: Galvo scanner configuration
             simplify_tolerance: Path simplification tolerance in mm (Ramer-Douglas-Peucker)
             path_merge_threshold: Distance for merging adjacent segments in mm
+            line_thickness: Max line thickness in pixels/units to collapse into single centerlines
+                            (avoids double lines; 0 to disable)
         """
         self.vectorizer = Vectorizer(
             method=vectorizer_method,
             simplify_tolerance=simplify_tolerance,
+            line_thickness=line_thickness,
         )
         self.optimizer = PathOptimizer(
             tolerance=simplify_tolerance,
             merge_threshold=path_merge_threshold,
+            max_line_thickness=line_thickness,
         )
         self.conditioner = GalvoConditioner(galvo_config)
+        self.line_thickness = line_thickness
 
     def convert(
         self,
@@ -57,6 +63,7 @@ class ILDAConverter:
         frame_name: str = "FRAME",
         company_name: str = "CONVERTER",
         write_both: bool = False,
+        line_thickness: Optional[float] = None,
     ) -> Dict:
         """
         Convert raster image or SVG file to ILDA format (.ilda or .ild).
@@ -71,10 +78,15 @@ class ILDAConverter:
             frame_name: ILDA frame name (up to 8 chars)
             company_name: ILDA company name (up to 8 chars)
             write_both: If True, writes both .ild (Pangolin Beyond) and .ilda files
+            line_thickness: Optional override for max line thickness to collapse double lines
 
         Returns:
             Dictionary with conversion statistics
         """
+        if line_thickness is not None:
+            self.optimizer.max_line_thickness = line_thickness
+            self.vectorizer.line_thickness = line_thickness
+
         path_obj = Path(input_path)
         if path_obj.suffix.lower() == ".svg":
             return self.convert_svg(
@@ -84,6 +96,7 @@ class ILDAConverter:
                 frame_name=frame_name,
                 company_name=company_name,
                 write_both=write_both,
+                line_thickness=line_thickness,
             )
 
         return self.convert_raster(
@@ -95,6 +108,7 @@ class ILDAConverter:
             frame_name=frame_name,
             company_name=company_name,
             write_both=write_both,
+            line_thickness=line_thickness,
         )
 
     @staticmethod
@@ -130,12 +144,18 @@ class ILDAConverter:
         frame_name: str = "SVG_FRM",
         company_name: str = "CONVERTER",
         write_both: bool = False,
+        line_thickness: Optional[float] = None,
     ) -> Dict:
         """
         Directly convert an SVG vector file to ILDA format.
         Bypasses rasterization and runs path optimization and galvo conditioning.
         """
+        if line_thickness is not None:
+            self.optimizer.max_line_thickness = line_thickness
+
         print(f"Converting SVG: {svg_path} -> {output_ilda_path}")
+        if self.optimizer.max_line_thickness > 0:
+            print(f"  -> Ribbon collapse active (max thickness: {self.optimizer.max_line_thickness:.1f} px to prevent double lines)")
 
         # Stage 1: Path Optimization & TSP reordering
         print("Stage 1: Optimizing paths & TSP sorting (vpype)...")
@@ -210,10 +230,15 @@ class ILDAConverter:
         frame_name: str = "IMAGE",
         company_name: str = "CONVERTER",
         write_both: bool = False,
+        line_thickness: Optional[float] = None,
     ) -> Dict:
         """
         Convert raster image to ILDA format through full 4-stage pipeline.
         """
+        if line_thickness is not None:
+            self.optimizer.max_line_thickness = line_thickness
+            self.vectorizer.line_thickness = line_thickness
+
         print(f"Converting raster: {image_path} -> {output_ilda_path}")
 
         # Stage 1: Preprocess (optional thresholding / cleanup)
@@ -312,6 +337,7 @@ def convert_image(
     color: Tuple[int, int, int] = (255, 255, 255),
     preprocess: bool = False,
     write_both: bool = False,
+    line_thickness: float = 25.0,
 ) -> Dict:
     """
     Convenience function to convert a raster image or SVG to ILDA (.ilda or .ild).
@@ -320,6 +346,7 @@ def convert_image(
     converter = ILDAConverter(
         vectorizer_method=vectorizer,
         galvo_config=galvo_config,
+        line_thickness=line_thickness,
     )
     return converter.convert(
         image_path,
@@ -327,6 +354,7 @@ def convert_image(
         color=color,
         preprocess=preprocess,
         write_both=write_both,
+        line_thickness=line_thickness,
     )
 
 
@@ -337,16 +365,18 @@ def convert_svg(
     fps: int = 30,
     color: Tuple[int, int, int] = (255, 255, 255),
     write_both: bool = False,
+    line_thickness: float = 25.0,
 ) -> Dict:
     """
     Convenience function to directly convert an SVG to ILDA (.ilda or .ild).
     """
     galvo_config = GalvoConfig(pps=pps, target_fps=fps)
-    converter = ILDAConverter(galvo_config=galvo_config)
+    converter = ILDAConverter(galvo_config=galvo_config, line_thickness=line_thickness)
     return converter.convert_svg(
         svg_path,
         output_path,
         color=color,
         write_both=write_both,
+        line_thickness=line_thickness,
     )
 
