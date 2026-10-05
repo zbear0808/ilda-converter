@@ -6,37 +6,41 @@ import argparse
 import sys
 from pathlib import Path
 
-from .pipeline import convert_image
+from .pipeline import ILDAConverter
 from .galvo_conditioner import GalvoConfig
 
 
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Convert raster images to optimized ILDA laser projector files",
+        description="Convert raster images and SVG files to optimized ILDA laser projector files",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic conversion
+  # Basic conversion (SVG or Raster)
   ilda-convert logo.png output.ilda
+  ilda-convert vector.svg output.ilda
+
+  # Modern vision-based color/binary vectorization with VTracer
+  ilda-convert --vectorizer vtracer logo.png output.ilda
 
   # High-contrast black & white with Potrace
   ilda-convert --vectorizer potrace --preprocess logo.png output.ilda
 
-  # Thin lines / text with centerline extraction
+  # Thin lines / text with centerline skeleton extraction
   ilda-convert --vectorizer centerline --preprocess text.png output.ilda
 
-  # Custom galvo settings for 40k PPS scanner
+  # Custom galvo settings for 40k PPS scanner at 30 FPS
   ilda-convert --pps 40000 --fps 30 logo.png output.ilda
 
-  # Blue color output
-  ilda-convert --color 0,0,255 logo.png output.ilda
+  # Cyan color output (R,G,B)
+  ilda-convert --color 0,255,255 logo.png output.ilda
         """,
     )
 
     parser.add_argument(
         "input",
-        help="Input image file (PNG, JPG, BMP, etc.)",
+        help="Input image or SVG file (SVG, PNG, JPG, BMP, etc.)",
     )
 
     parser.add_argument(
@@ -47,9 +51,9 @@ Examples:
     parser.add_argument(
         "-v",
         "--vectorizer",
-        choices=["vtracer", "potrace", "centerline"],
-        default="centerline",
-        help="Vectorization method (default: centerline - works on all platforms)",
+        choices=["vtracer", "centerline", "potrace"],
+        default="vtracer",
+        help="Vectorization method (default: vtracer)",
     )
 
     parser.add_argument(
@@ -101,6 +105,20 @@ Examples:
         help="Path simplification tolerance (default: 1.0)",
     )
 
+    parser.add_argument(
+        "--frame-name",
+        type=str,
+        default="FRAME",
+        help="ILDA frame name (up to 8 chars)",
+    )
+
+    parser.add_argument(
+        "--company-name",
+        type=str,
+        default="CONVERTER",
+        help="ILDA company name (up to 8 chars)",
+    )
+
     args = parser.parse_args()
 
     # Validate input
@@ -116,7 +134,7 @@ Examples:
             raise ValueError
     except ValueError:
         print(
-            f"Error: Invalid color format. Use R,G,B with values 0-255",
+            "Error: Invalid color format. Use R,G,B with values 0-255",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -130,8 +148,6 @@ Examples:
 
     # Run conversion
     try:
-        from .pipeline import ILDAConverter
-
         converter = ILDAConverter(
             vectorizer_method=args.vectorizer,
             galvo_config=galvo_config,
@@ -144,13 +160,16 @@ Examples:
             color=color,
             preprocess=args.preprocess,
             threshold_method=args.threshold,
+            frame_name=args.frame_name,
+            company_name=args.company_name,
         )
 
         # Print summary
         print("\n" + "=" * 60)
         print("Conversion Summary")
         print("=" * 60)
-        print(f"Input:              {stats['input_image']}")
+        input_file = stats.get("input_file", stats.get("input_image", str(input_path)))
+        print(f"Input:              {input_file}")
         print(f"Output:             {stats['output_file']}")
         print(f"Vectorizer:         {stats['vectorizer']}")
         print(f"Paths:              {stats['path_count']}")
@@ -162,9 +181,9 @@ Examples:
         print(f"Budget Usage:       {stats['budget_utilization']:.1%}")
         print("=" * 60)
 
-        if stats["budget_utilization"] > 1.0:
+        if stats["budget_utilization"] > 1.25:
             print(
-                "\n⚠ WARNING: Point budget exceeded! Frame rate will be reduced.",
+                "\n[WARNING] Point budget exceeded! Frame rate will be reduced.",
                 file=sys.stderr,
             )
             print(

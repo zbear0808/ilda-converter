@@ -215,3 +215,71 @@ def write_ilda_file(
 
     writer = ILDAWriter(frame_name, company_name)
     writer.write_frame(filename, ilda_points)
+
+
+def read_ilda_file(filename: str) -> dict:
+    """
+    Read an ILDA Format 5 file and return its header and points.
+
+    Args:
+        filename: Path to the .ilda file
+
+    Returns:
+        Dict with keys:
+            - 'header': dict of header fields
+            - 'points': list of ILDAPoint instances
+            - 'total_points': total count of points
+            - 'beam_on_count': points with laser beam active
+            - 'blanked_count': points with laser beam off
+    """
+    with open(filename, "rb") as f:
+        data = f.read()
+
+    if len(data) < 32:
+        raise ValueError("File is too small to be a valid ILDA file")
+
+    header_data = data[:32]
+    (
+        ilda_marker,
+        reserved,
+        format_code,
+        frame_name,
+        company_name,
+        num_points,
+        frame_num,
+        total_frames,
+        scanner_head,
+        reserved2,
+    ) = struct.unpack(">4s3sB8s8sHHHBB", header_data)
+
+    if ilda_marker != b"ILDA":
+        raise ValueError(f"Invalid ILDA marker: {ilda_marker}")
+
+    points = []
+    offset = 32
+    for _ in range(num_points):
+        if offset + 8 > len(data):
+            break
+        x, y, status, r, g, b = struct.unpack(">hhBBBB", data[offset : offset + 8])
+        blanked = bool(status & 0x40)
+        points.append(ILDAPoint(x=x, y=y, blanked=blanked, r=r, g=g, b=b))
+        offset += 8
+
+    beam_on = sum(1 for p in points if not p.blanked)
+    blanked = len(points) - beam_on
+
+    return {
+        "header": {
+            "format_code": format_code,
+            "frame_name": frame_name.decode("ascii", errors="replace").strip(),
+            "company_name": company_name.decode("ascii", errors="replace").strip(),
+            "point_count": num_points,
+            "frame_number": frame_num,
+            "total_frames": total_frames,
+        },
+        "points": points,
+        "total_points": len(points),
+        "beam_on_count": beam_on,
+        "blanked_count": blanked,
+    }
+

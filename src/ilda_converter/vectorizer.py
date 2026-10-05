@@ -74,29 +74,31 @@ class Vectorizer:
         paths = self._parse_svg_paths(output_svg_path)
         return paths, output_svg_path
 
-    def _vectorize_vtracer(self, image_path: str, output_path: str):
-        """Vectorize using VTracer (best for color images)."""
+    def _vectorize_vtracer(
+        self,
+        image_path: str,
+        output_path: str,
+        colormode: str = "binary",
+    ):
+        """Vectorize using VTracer (modern vision-based vectorizer)."""
         try:
             import vtracer
         except ImportError:
             raise ImportError(
-                "vtracer not installed. VTracer requires Rust toolchain.\n"
-                "Install with: pip install vtracer\n"
+                "vtracer not installed.\n"
+                "Install with: .\\.venv\\Scripts\\pip.exe install vtracer\n"
                 "Or use alternative vectorizers:\n"
-                "  --vectorizer potrace (for B&W images)\n"
-                "  --vectorizer centerline (for thin lines/text)"
+                "  --vectorizer centerline (for thin lines/text)\n"
+                "  --vectorizer potrace (for B&W silhouettes)"
             )
 
-        # VTracer works best with good contrast
+        # VTracer with spline mode produces smooth laser-friendly curves
         vtracer.convert_image_to_svg_py(
             image_path,
             output_path,
-            colormode="color",  # or 'binary'
-            hierarchical="stacked",
+            colormode=colormode,
             mode="spline",
             filter_speckle=4,
-            color_precision=6,
-            layer_difference=16,
             corner_threshold=60,
             length_threshold=4.0,
             max_iterations=10,
@@ -106,17 +108,16 @@ class Vectorizer:
 
     def _vectorize_potrace(self, image_path: str, output_path: str):
         """Vectorize using Potrace (best for high-contrast B&W)."""
-        # Preprocess: threshold to pure B&W
+        import subprocess
+
         img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             raise ValueError(f"Could not load image: {image_path}")
 
-        # Apply Otsu's thresholding
         _, binary = cv2.threshold(
             img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
         )
 
-        # Save temporary BMP for potrace
         temp_bmp = tempfile.NamedTemporaryFile(
             mode="wb", suffix=".bmp", delete=False
         )
@@ -125,14 +126,11 @@ class Vectorizer:
 
         cv2.imwrite(temp_bmp_path, binary)
 
-        # Run potrace command line
-        import subprocess
-
         try:
             subprocess.run(
                 [
                     "potrace",
-                    "-s",  # SVG output
+                    "-s",
                     "-o",
                     output_path,
                     temp_bmp_path,
@@ -142,7 +140,7 @@ class Vectorizer:
             )
         except FileNotFoundError:
             raise ImportError(
-                "potrace not found. Install from: http://potrace.sourceforge.net/"
+                "potrace not found. Install potrace or use --vectorizer vtracer / centerline"
             )
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"potrace failed: {e.stderr.decode()}")
@@ -151,27 +149,21 @@ class Vectorizer:
 
     def _vectorize_centerline(self, image_path: str, output_path: str):
         """Extract centerlines using skeletonization (best for thin lines)."""
-        # Load image
         img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             raise ValueError(f"Could not load image: {image_path}")
 
-        # Threshold
         _, binary = cv2.threshold(
             img, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
         )
 
-        # Skeletonize to 1-pixel-wide centerlines
         binary_bool = binary > 0
         skeleton = morphology.skeletonize(binary_bool)
-
-        # Convert skeleton to contours
         skeleton_img = img_as_ubyte(skeleton)
         contours, _ = cv2.findContours(
             skeleton_img, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
         )
 
-        # Build SVG from contours
         self._contours_to_svg(contours, output_path, img.shape)
 
     def _contours_to_svg(
@@ -192,11 +184,9 @@ class Vectorizer:
             if len(contour) < 2:
                 continue
 
-            # Simplify contour
             epsilon = self.simplify_tolerance
             approx = cv2.approxPolyDP(contour, epsilon, closed=False)
 
-            # Build path
             points = approx.reshape(-1, 2)
             path_d = f"M {points[0][0]},{points[0][1]}"
 
@@ -212,12 +202,18 @@ class Vectorizer:
         with open(output_path, "w") as f:
             f.write("\n".join(svg_lines))
 
+    def load_svg(self, svg_path: str) -> List[np.ndarray]:
+        """Load and parse paths directly from an existing SVG file."""
+        return self._parse_svg_paths(svg_path)
+
+
     def _parse_svg_paths(self, svg_path: str) -> List[np.ndarray]:
         """
         Parse SVG file into coordinate arrays.
+        Splits compound paths into individual continuous strokes.
 
         Returns:
-            List of Nx2 numpy arrays (each array is one path)
+            List of Nx2 numpy arrays (each array is one continuous stroke)
         """
         try:
             paths, _ = svgpathtools.svg2paths(svg_path)
@@ -227,24 +223,25 @@ class Vectorizer:
         path_arrays = []
 
         for path in paths:
-            # Sample each SVG path into discrete points
-            # Use length-based sampling for uniform spacing
-            length = path.length()
-            if length < 1e-6:
-                continue
+            # Crucial for laser scanning: split compound paths into continuous subpaths
+            subpaths = path.continuous_subpaths() if hasattr(path, "continuous_subpaths") else [path]
+            for subpath in subpaths:
+                length = subpath.length()
+                if length < 1e-4:
+                    continue
 
-            # Sample approximately every 1 unit
-            num_samples = max(int(length) + 1, 10)
-            coords = []
+                num_samples = max(int(length) + 1, 10)
+                coords = []
 
-            for i in range(num_samples):
-                t = i / (num_samples - 1)
-                point = path.point(t)
-                coords.append([point.real, point.imag])
+                for i in range(num_samples):
+                    t = i / (num_samples - 1)
+                    point = subpath.point(t)
+                    coords.append([point.real, point.imag])
 
-            path_arrays.append(np.array(coords))
+                path_arrays.append(np.array(coords))
 
         return path_arrays
+
 
 
 def preprocess_image(
