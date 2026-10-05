@@ -7,6 +7,7 @@ Supports:
 - Centerline extraction for thin lines/text
 """
 
+import re
 import tempfile
 from pathlib import Path
 from typing import List, Tuple, Optional, Literal
@@ -348,21 +349,48 @@ class Vectorizer:
 
     def _parse_svg_paths(self, svg_path: str) -> List[np.ndarray]:
         """
-        Parse SVG file into coordinate arrays.
-        Splits compound paths into individual continuous strokes.
+        Parse SVG file into coordinate arrays with full support for SVG transforms
+        (translate, matrix, scale, rotate) to prevent component misalignments.
 
         Returns:
             List of Nx2 numpy arrays (each array is one continuous stroke)
         """
+        # Primary parser: vpype handles full SVG standard including transforms and compound paths
         try:
-            paths, _ = svgpathtools.svg2paths(svg_path)
+            import vpype
+            import vpype_cli
+
+            posix_path = Path(svg_path).as_posix()
+            doc = vpype_cli.execute(f"read '{posix_path}'")
+            lc = doc.layers.get(1, vpype.LineCollection())
+            paths = [
+                np.column_stack([line.real, line.imag])
+                for line in lc
+                if len(line) >= 2
+            ]
+            if paths:
+                return paths
+        except Exception:
+            pass
+
+        # Fallback parser using svgpathtools with explicit transform parsing
+        try:
+            paths, attributes = svgpathtools.svg2paths(svg_path)
         except Exception as e:
             raise RuntimeError(f"Failed to parse SVG: {e}")
 
         path_arrays = []
 
-        for path in paths:
-            # Crucial for laser scanning: split compound paths into continuous subpaths
+        for path, attr in zip(paths, attributes):
+            # Parse transform if present (e.g. translate(tx, ty))
+            tx, ty = 0.0, 0.0
+            transform_str = attr.get("transform", "")
+            if transform_str:
+                trans_match = re.search(r"translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)", transform_str)
+                if trans_match:
+                    tx = float(trans_match.group(1))
+                    ty = float(trans_match.group(2))
+
             subpaths = path.continuous_subpaths() if hasattr(path, "continuous_subpaths") else [path]
             for subpath in subpaths:
                 length = subpath.length()
@@ -375,7 +403,7 @@ class Vectorizer:
                 for i in range(num_samples):
                     t = i / (num_samples - 1)
                     point = subpath.point(t)
-                    coords.append([point.real, point.imag])
+                    coords.append([point.real + tx, point.imag + ty])
 
                 path_arrays.append(np.array(coords))
 
