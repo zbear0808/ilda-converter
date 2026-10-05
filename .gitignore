@@ -54,3 +54,6 @@ test_*.py
 # OS
 .DS_Store
 Thumbs.db
+
+
+/output_comparison
