@@ -1,20 +1,19 @@
 """
 Run ILDA conversions on both test files:
-1. speedsvg.svg  (SVG vector input) -> speedsvg.ilda
-2. speedstars.jpg (JPEG raster input) -> speedstars.ilda
+1. speedsvg.svg  (SVG vector input) -> speedsvg.ild and speedsvg.ilda
+2. speedstars.jpg (JPEG raster input) -> speedstars.ild and speedstars.ilda
 """
 
 import os
+import shutil
 from pathlib import Path
 from ilda_converter import ILDAConverter, GalvoConfig, read_ilda_file
 
 svg_input = r"C:\Users\zubair\Downloads\speedsvg.svg"
-svg_output_downloads = r"C:\Users\zubair\Downloads\speedsvg.ilda"
-svg_output_workspace = r"speedsvg.ilda"
+svg_output_downloads = r"C:\Users\zubair\Downloads\speedsvg.ild"
 
 jpg_input = r"C:\Users\zubair\Downloads\speedstars.jpg"
-jpg_output_downloads = r"C:\Users\zubair\Downloads\speedstars.ilda"
-jpg_output_workspace = r"speedstars.ilda"
+jpg_output_downloads = r"C:\Users\zubair\Downloads\speedstars.ild"
 
 galvo_config = GalvoConfig(
     pps=30000,
@@ -29,7 +28,7 @@ galvo_config = GalvoConfig(
 )
 
 print("=" * 70)
-print("RUNNING ILDA CONVERSIONS")
+print("RUNNING ILDA CONVERSIONS (.ild for Beyond & .ilda)")
 print("=" * 70)
 
 # --- 1. SVG CONVERSION ---
@@ -42,18 +41,18 @@ stats_svg = converter_svg.convert_svg(
     color=(0, 255, 255),  # Cyan
     frame_name="SPEEDSVG",
     company_name="ILDA_CVT",
+    write_both=True,
 )
 
-# Also save a copy in the workspace
-import shutil
-shutil.copy2(svg_output_downloads, svg_output_workspace)
+# Workspace copies
+for f in stats_svg["output_files"]:
+    shutil.copy2(f, Path(f).name)
 
 # Verify SVG ILDA output
-data_svg = read_ilda_file(svg_output_downloads)
-print("\nSVG Conversion Verification:")
-print(f"  Output path:        {svg_output_downloads}")
-print(f"  Workspace copy:     {os.path.abspath(svg_output_workspace)}")
-print(f"  File size:          {os.path.getsize(svg_output_downloads):,} bytes")
+data_svg = read_ilda_file(r"C:\Users\zubair\Downloads\speedsvg.ild")
+print("\nSVG Conversion Verification (.ild for Pangolin Beyond):")
+for f in stats_svg["output_files"]:
+    print(f"  Saved file:         {f} ({os.path.getsize(f):,} bytes)")
 print(f"  ILDA Format Code:   {data_svg['header']['format_code']}")
 print(f"  Frame Name:         {data_svg['header']['frame_name']}")
 print(f"  Company:            {data_svg['header']['company_name']}")
@@ -77,17 +76,18 @@ stats_jpg = converter_jpg.convert_raster(
     color=(255, 255, 0),  # Yellow
     frame_name="SPDSTARS",
     company_name="ILDA_CVT",
+    write_both=True,
 )
 
-# Also save a copy in the workspace
-shutil.copy2(jpg_output_downloads, jpg_output_workspace)
+# Workspace copies
+for f in stats_jpg["output_files"]:
+    shutil.copy2(f, Path(f).name)
 
 # Verify JPEG ILDA output
-data_jpg = read_ilda_file(jpg_output_downloads)
-print("\nJPEG Conversion Verification:")
-print(f"  Output path:        {jpg_output_downloads}")
-print(f"  Workspace copy:     {os.path.abspath(jpg_output_workspace)}")
-print(f"  File size:          {os.path.getsize(jpg_output_downloads):,} bytes")
+data_jpg = read_ilda_file(r"C:\Users\zubair\Downloads\speedstars.ild")
+print("\nJPEG Conversion Verification (.ild for Pangolin Beyond):")
+for f in stats_jpg["output_files"]:
+    print(f"  Saved file:         {f} ({os.path.getsize(f):,} bytes)")
 print(f"  ILDA Format Code:   {data_jpg['header']['format_code']}")
 print(f"  Frame Name:         {data_jpg['header']['frame_name']}")
 print(f"  Company:            {data_jpg['header']['company_name']}")
@@ -97,5 +97,5 @@ print(f"    Blanked:          {data_jpg['blanked_count']}")
 print(f"  Budget Utilization: {data_jpg['total_points'] / galvo_config.pps * galvo_config.target_fps:.1%}")
 
 print("\n" + "=" * 70)
-print("[OK] ALL CONVERSIONS COMPLETED AND VERIFIED SUCCESSFULLY")
+print("[OK] ALL CONVERSIONS COMPLETED AND VERIFIED (.ild AND .ilda)")
 print("=" * 70)

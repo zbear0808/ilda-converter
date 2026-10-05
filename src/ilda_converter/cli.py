@@ -119,6 +119,13 @@ Examples:
         help="ILDA company name (up to 8 chars)",
     )
 
+    parser.add_argument(
+        "-b",
+        "--both",
+        action="store_true",
+        help="Write both .ild (Pangolin Beyond) and .ilda files",
+    )
+
     args = parser.parse_args()
 
     # Validate input
@@ -162,6 +169,7 @@ Examples:
             threshold_method=args.threshold,
             frame_name=args.frame_name,
             company_name=args.company_name,
+            write_both=args.both,
         )
 
         # Print summary

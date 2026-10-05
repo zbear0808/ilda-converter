@@ -56,19 +56,21 @@ class ILDAConverter:
         threshold_method: Literal["otsu", "adaptive", "manual"] = "otsu",
         frame_name: str = "FRAME",
         company_name: str = "CONVERTER",
+        write_both: bool = False,
     ) -> Dict:
         """
-        Convert raster image or SVG file to ILDA format.
+        Convert raster image or SVG file to ILDA format (.ilda or .ild).
         Automatically detects SVG files to skip rasterization.
 
         Args:
             input_path: Path to input file (JPG, PNG, BMP, or SVG)
-            output_ilda_path: Path to write the .ilda file
+            output_ilda_path: Path to write the file (.ilda or .ild)
             color: Default RGB color tuple (0-255)
             preprocess: Apply raster preprocessing (threshold, inversion)
             threshold_method: Thresholding method if preprocessing
             frame_name: ILDA frame name (up to 8 chars)
             company_name: ILDA company name (up to 8 chars)
+            write_both: If True, writes both .ild (Pangolin Beyond) and .ilda files
 
         Returns:
             Dictionary with conversion statistics
@@ -81,6 +83,7 @@ class ILDAConverter:
                 color=color,
                 frame_name=frame_name,
                 company_name=company_name,
+                write_both=write_both,
             )
 
         return self.convert_raster(
@@ -91,7 +94,33 @@ class ILDAConverter:
             threshold_method=threshold_method,
             frame_name=frame_name,
             company_name=company_name,
+            write_both=write_both,
         )
+
+    @staticmethod
+    def _write_outputs(
+        writer: ILDAWriter,
+        output_path: str,
+        points: list,
+        write_both: bool = False,
+    ) -> list:
+        """Write ILDA file and optionally its counterpart (.ild vs .ilda)."""
+        p = Path(output_path)
+        writer.write_frame(str(p), points)
+        written = [str(p)]
+
+        if write_both:
+            ext = p.suffix.lower()
+            if ext == ".ilda":
+                alt = p.with_suffix(".ild")
+            elif ext == ".ild":
+                alt = p.with_suffix(".ilda")
+            else:
+                alt = p.with_name(p.name + ".ild")
+            writer.write_frame(str(alt), points)
+            written.append(str(alt))
+
+        return written
 
     def convert_svg(
         self,
@@ -100,6 +129,7 @@ class ILDAConverter:
         color: Tuple[int, int, int] = (255, 255, 255),
         frame_name: str = "SVG_FRM",
         company_name: str = "CONVERTER",
+        write_both: bool = False,
     ) -> Dict:
         """
         Directly convert an SVG vector file to ILDA format.
@@ -133,7 +163,7 @@ class ILDAConverter:
         print(f"  -> Generated {len(conditioned_points)} points")
         print(f"  -> Point budget: {self.conditioner.max_points_per_frame} max")
 
-        # Stage 4: Write ILDA binary file
+        # Stage 4: Write ILDA binary file(s)
         print("Stage 4: Writing ILDA Format 5 binary file...")
         writer = ILDAWriter(frame_name=frame_name, company_name=company_name)
         ilda_points = [
@@ -147,15 +177,19 @@ class ILDAConverter:
             )
             for p in conditioned_points
         ]
-        writer.write_frame(output_ilda_path, ilda_points)
-        print(f"[OK] Conversion complete: {output_ilda_path}")
+        written_files = self._write_outputs(
+            writer, output_ilda_path, ilda_points, write_both=write_both
+        )
+        for w in written_files:
+            print(f"[OK] Conversion complete: {w}")
 
         beam_on_points = sum(1 for p in conditioned_points if not p["blanked"])
         beam_off_points = len(conditioned_points) - beam_on_points
 
         return {
             "input_file": svg_path,
-            "output_file": output_ilda_path,
+            "output_file": written_files[0],
+            "output_files": written_files,
             "vectorizer": "svg_direct",
             "path_count": len(optimized_paths),
             "total_points": len(conditioned_points),
@@ -175,6 +209,7 @@ class ILDAConverter:
         threshold_method: Literal["otsu", "adaptive", "manual"] = "otsu",
         frame_name: str = "IMAGE",
         company_name: str = "CONVERTER",
+        write_both: bool = False,
     ) -> Dict:
         """
         Convert raster image to ILDA format through full 4-stage pipeline.
@@ -244,15 +279,19 @@ class ILDAConverter:
             )
             for p in conditioned_points
         ]
-        writer.write_frame(output_ilda_path, ilda_points)
-        print(f"[OK] Conversion complete: {output_ilda_path}")
+        written_files = self._write_outputs(
+            writer, output_ilda_path, ilda_points, write_both=write_both
+        )
+        for w in written_files:
+            print(f"[OK] Conversion complete: {w}")
 
         beam_on_points = sum(1 for p in conditioned_points if not p["blanked"])
         beam_off_points = len(conditioned_points) - beam_on_points
 
         return {
             "input_file": image_path,
-            "output_file": output_ilda_path,
+            "output_file": written_files[0],
+            "output_files": written_files,
             "vectorizer": self.vectorizer.method,
             "path_count": len(optimized_paths),
             "total_points": len(conditioned_points),
@@ -272,9 +311,10 @@ def convert_image(
     fps: int = 30,
     color: Tuple[int, int, int] = (255, 255, 255),
     preprocess: bool = False,
+    write_both: bool = False,
 ) -> Dict:
     """
-    Convenience function to convert a raster image or SVG to ILDA.
+    Convenience function to convert a raster image or SVG to ILDA (.ilda or .ild).
     """
     galvo_config = GalvoConfig(pps=pps, target_fps=fps)
     converter = ILDAConverter(
@@ -286,6 +326,7 @@ def convert_image(
         output_path,
         color=color,
         preprocess=preprocess,
+        write_both=write_both,
     )
 
 
@@ -295,9 +336,10 @@ def convert_svg(
     pps: int = 30000,
     fps: int = 30,
     color: Tuple[int, int, int] = (255, 255, 255),
+    write_both: bool = False,
 ) -> Dict:
     """
-    Convenience function to directly convert an SVG to ILDA.
+    Convenience function to directly convert an SVG to ILDA (.ilda or .ild).
     """
     galvo_config = GalvoConfig(pps=pps, target_fps=fps)
     converter = ILDAConverter(galvo_config=galvo_config)
@@ -305,4 +347,6 @@ def convert_svg(
         svg_path,
         output_path,
         color=color,
+        write_both=write_both,
     )
+
