@@ -1,0 +1,30 @@
+asteval==1.0.10
+cachetools==7.2.0
+click==8.5.0
+colorama==0.4.6
+dill==0.4.1
+# Editable install with no version control (ilda-converter==0.1.0)
+-e c:\users\zubair\documents\github\ilda-converter
+ImageIO==2.38.0
+iniconfig==2.3.0
+lazy-loader==0.6
+multiprocess==0.70.19
+networkx==3.7
+numpy==2.5.3
+opencv-python==5.0.0.93
+packaging==26.3
+pillow==12.3.0
+pluggy==1.6.0
+pnoise==0.2.0
+Pygments==2.21.0
+pyphen==0.15.0
+pytest==9.1.1
+scikit-image==0.26.0
+scipy==1.18.1
+shapely==2.1.2
+svgelements==1.9.6
+svgpathtools==1.8.0
+svgwrite==1.4.3
+tifffile==2026.9.20
+tomli==2.4.1
+vpype==1.15.0

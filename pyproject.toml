@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ilda-converter"
+version = "0.1.0"
+description = "Convert raster images to optimized ILDA laser projector files"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "Zubair"}
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "opencv-python>=4.8.0",
+    "scikit-image>=0.21.0",
+    "vpype>=1.13.0",
+    "svgpathtools>=1.6.0",
+    "shapely>=2.0.0",
+    "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.7.0",
+    "ruff>=0.0.282",
+]
+# Optional: VTracer for color vectorization (requires Rust toolchain on Windows)
+vtracer = [
+    "vtracer>=0.6.0",
+]
+
+[project.scripts]
+ilda-convert = "ilda_converter.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
