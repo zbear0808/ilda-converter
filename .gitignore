@@ -45,7 +45,8 @@ _preprocessed_*
 # Test files
 test_logo.png
 test_output.ilda
-test_*.py
+/test_*.py
+!tests/
 
 # Output files
 *.ilda
@@ -56,4 +57,5 @@ test_*.py
 Thumbs.db
 
 
-/output_comparison
+/output_comparison/
+/output_text_control/

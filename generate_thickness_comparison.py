@@ -9,14 +9,13 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 from ilda_converter import (
     ILDAConverter,
     GalvoConfig,
     read_ilda_file,
 )
-from ilda_converter.path_optimizer import PathOptimizer
 
 
 def render_ilda_preview(
@@ -273,10 +272,68 @@ def run_thickness_sweep(
 
 def generate_html_dashboard(
     output_dir: Path,
-    svg_results: List[Dict],
-    jpg_results: List[Dict],
+    dataset_configs: List[Dict],
 ):
-    """Generate an interactive HTML comparison dashboard."""
+    """Generate an interactive HTML comparison dashboard supporting multiple datasets."""
+    tabs_html = ""
+    tabs_content_html = ""
+
+    for idx, d in enumerate(dataset_configs):
+        key = d["key"]
+        name = d["name"]
+        active_class = "active" if idx == 0 else ""
+
+        tabs_html += f"""  <button class="tab-btn {active_class}" onclick="showTab('{key}-tab', this)">{name}</button>\n"""
+
+        cards_html = ""
+        for r in d["results"]:
+            t = r["thickness"]
+            is_rec = (20.0 <= t <= 30.0)
+            rec_badge = '<span class="badge recommended">Recommended</span>' if is_rec else f'<span class="badge">{r["status"].split()[0]}</span>'
+            cards_html += f"""
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Thickness: {t:.1f} px</span>
+        {rec_badge}
+      </div>
+      <img class="card-img" data-clean="{key}/{r['clean_png']}" data-full="{key}/{r['preview_png']}" src="{key}/{r['clean_png']}" onclick="window.open(this.src)" title="Click to view full size">
+      <div class="card-body">
+        <div class="stat-row"><span class="stat-label">Paths:</span><span class="stat-val">{r['paths']}</span></div>
+        <div class="stat-row"><span class="stat-label">Total Points:</span><span class="stat-val">{r['points']}</span></div>
+        <div class="stat-row"><span class="stat-label">Beam On / Blanked:</span><span class="stat-val">{r['beam_on']} / {r['blanked']}</span></div>
+        <div class="stat-row"><span class="stat-label">Budget Usage:</span><span class="stat-val">{r['budget_pct']:.1f}%</span></div>
+        <div class="stat-row"><span class="stat-label">Status:</span><span class="stat-val">{r['status']}</span></div>
+        <div class="downloads">
+          <a class="dl-btn" href="{key}/{r['ild_file']}" download>Download .ild (Beyond)</a>
+          <a class="dl-btn" href="{key}/{r['ilda_file']}" download>Download .ilda</a>
+        </div>
+      </div>
+    </div>
+"""
+
+        tabs_content_html += f"""
+<!-- {key.upper()} TAB -->
+<div id="{key}-tab" class="tab-content {active_class}">
+  <div class="controls">
+    <div><strong>Input:</strong> {d['filename']} &nbsp;|&nbsp; <strong>Mode:</strong> {d['mode']} &nbsp;|&nbsp; <strong>Budget:</strong> 1,000 pts (30k PPS / 30 FPS)</div>
+    <div>
+      <button class="toggle-btn" id="{key}-toggle-blanked" onclick="toggleBlanked('{key}')">Toggle Transit Jumps (Off)</button>
+    </div>
+  </div>
+
+  <div class="overview-banner">
+    <h3>All-in-One Visual Contact Sheet</h3>
+    <a href="{key}/comparison_grid.png" target="_blank">
+      <img src="{key}/comparison_grid.png" alt="{name} Comparison Grid">
+    </a>
+  </div>
+
+  <div class="grid">
+{cards_html}
+  </div>
+</div>
+"""
+
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -322,6 +379,7 @@ def generate_html_dashboard(
     justify-content: center;
     gap: 12px;
     margin-bottom: 24px;
+    flex-wrap: wrap;
   }}
   .tab-btn {{
     background: var(--card-bg);
@@ -474,96 +532,22 @@ def generate_html_dashboard(
 </header>
 
 <div class="tabs">
-  <button class="tab-btn active" onclick="showTab('svg-tab', this)">speedsvg.svg (SVG Direct)</button>
-  <button class="tab-btn" onclick="showTab('jpg-tab', this)">speedstars.jpg (Raster Vectorized)</button>
+{tabs_html}
 </div>
 
-<!-- SVG TAB -->
-<div id="svg-tab" class="tab-content active">
-  <div class="controls">
-    <div><strong>Input:</strong> speedsvg.svg &nbsp;|&nbsp; <strong>Default PPS:</strong> 30,000 &nbsp;|&nbsp; <strong>Budget:</strong> 1,000 pts</div>
-    <div>
-      <button class="toggle-btn active" id="svg-toggle-blanked" onclick="toggleBlanked('svg')">Toggle Transit Jumps (Off)</button>
-    </div>
-  </div>
-
-  <div class="overview-banner">
-    <h3>All-in-One Visual Contact Sheet</h3>
-    <a href="speedsvg/comparison_grid.png" target="_blank">
-      <img src="speedsvg/comparison_grid.png" alt="SVG Comparison Grid">
-    </a>
-  </div>
-
-  <div class="grid">
-"""
-
-    def render_cards(results: List[Dict], folder: str) -> str:
-        cards_html = ""
-        for r in results:
-            t = r["thickness"]
-            is_rec = (20.0 <= t <= 30.0)
-            rec_badge = '<span class="badge recommended">Recommended</span>' if is_rec else f'<span class="badge">{r["status"].split()[0]}</span>'
-            cards_html += f"""
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Thickness: {t:.1f} px</span>
-        {rec_badge}
-      </div>
-      <img class="card-img" data-clean="{folder}/{r['clean_png']}" data-full="{folder}/{r['preview_png']}" src="{folder}/{r['clean_png']}" onclick="window.open(this.src)" title="Click to view full size">
-      <div class="card-body">
-        <div class="stat-row"><span class="stat-label">Paths:</span><span class="stat-val">{r['paths']}</span></div>
-        <div class="stat-row"><span class="stat-label">Total Points:</span><span class="stat-val">{r['points']}</span></div>
-        <div class="stat-row"><span class="stat-label">Beam On / Blanked:</span><span class="stat-val">{r['beam_on']} / {r['blanked']}</span></div>
-        <div class="stat-row"><span class="stat-label">Budget Usage:</span><span class="stat-val">{r['budget_pct']:.1f}%</span></div>
-        <div class="stat-row"><span class="stat-label">Status:</span><span class="stat-val">{r['status']}</span></div>
-        <div class="downloads">
-          <a class="dl-btn" href="{folder}/{r['ild_file']}" download>Download .ild (Beyond)</a>
-          <a class="dl-btn" href="{folder}/{r['ilda_file']}" download>Download .ilda</a>
-        </div>
-      </div>
-    </div>
-"""
-        return cards_html
-
-    html_content += render_cards(svg_results, "speedsvg")
-    html_content += """
-  </div>
-</div>
-
-<!-- JPG TAB -->
-<div id="jpg-tab" class="tab-content">
-  <div class="controls">
-    <div><strong>Input:</strong> speedstars.jpg &nbsp;|&nbsp; <strong>Vectorizer:</strong> VTracer &nbsp;|&nbsp; <strong>Budget:</strong> 1,000 pts</div>
-    <div>
-      <button class="toggle-btn active" id="jpg-toggle-blanked" onclick="toggleBlanked('jpg')">Toggle Transit Jumps (Off)</button>
-    </div>
-  </div>
-
-  <div class="overview-banner">
-    <h3>All-in-One Visual Contact Sheet</h3>
-    <a href="speedstars/comparison_grid.png" target="_blank">
-      <img src="speedstars/comparison_grid.png" alt="JPG Comparison Grid">
-    </a>
-  </div>
-
-  <div class="grid">
-"""
-    html_content += render_cards(jpg_results, "speedstars")
-    html_content += """
-  </div>
-</div>
+{tabs_content_html}
 
 <script>
-function showTab(tabId, btn) {
-  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+function showTab(tabId, btn) {{
+  document.querySelectorAll('.tab-content').forEach(function(t) {{ t.classList.remove('active'); }});
+  document.querySelectorAll('.tab-btn').forEach(function(b) {{ b.classList.remove('active'); }});
   document.getElementById(tabId).classList.add('active');
   btn.classList.add('active');
-}
+}}
 
-let showBlankedMap = { 'svg': false, 'jpg': false };
+let showBlankedMap = {{}};
 
-function toggleBlanked(tabPrefix) {
+function toggleBlanked(tabPrefix) {{
   showBlankedMap[tabPrefix] = !showBlankedMap[tabPrefix];
   const isBlanked = showBlankedMap[tabPrefix];
   const btn = document.getElementById(tabPrefix + '-toggle-blanked');
@@ -571,10 +555,10 @@ function toggleBlanked(tabPrefix) {
   btn.classList.toggle('active', isBlanked);
 
   const container = document.getElementById(tabPrefix + '-tab');
-  container.querySelectorAll('.card-img').forEach(img => {
+  container.querySelectorAll('.card-img').forEach(function(img) {{
     img.src = isBlanked ? img.dataset.full : img.dataset.clean;
-  });
-}
+  }});
+}}
 </script>
 
 </body>
@@ -586,9 +570,6 @@ function toggleBlanked(tabPrefix) {
 
 
 def main():
-    svg_input = r"C:\Users\zubair\Downloads\speedsvg.svg"
-    jpg_input = r"C:\Users\zubair\Downloads\speedstars.jpg"
-
     downloads_base = Path(r"C:\Users\zubair\Downloads\ilda_thickness_comparison")
     workspace_base = Path(r"output_comparison")
 
@@ -597,18 +578,20 @@ def main():
 
     thresholds = [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 50.0, 75.0, 100.0]
 
-    # 1. Sweep speedsvg.svg
-    svg_dir_dl = downloads_base / "speedsvg"
-    svg_results = run_thickness_sweep(
-        input_file=svg_input,
-        output_dir=svg_dir_dl,
+    # 1. Sweep another_speed.jpg (Newly requested file - Solid Black Silhouette)
+    another_speed_input = r"C:\Users\zubair\Downloads\another_speed.jpg"
+    another_dir_dl = downloads_base / "another_speed"
+    another_results = run_thickness_sweep(
+        input_file=another_speed_input,
+        output_dir=another_dir_dl,
         thresholds=thresholds,
-        color=(0, 255, 255),  # Cyan
-        is_svg=True,
-        dataset_name="speedsvg",
+        color=(0, 255, 128),  # Vivid Laser Green
+        is_svg=False,
+        dataset_name="another_speed",
     )
 
-    # 2. Sweep speedstars.jpg
+    # 2. Sweep speedstars.jpg (Outline Silhouette)
+    jpg_input = r"C:\Users\zubair\Downloads\speedstars.jpg"
     jpg_dir_dl = downloads_base / "speedstars"
     jpg_results = run_thickness_sweep(
         input_file=jpg_input,
@@ -619,10 +602,46 @@ def main():
         dataset_name="speedstars",
     )
 
-    # 3. Generate HTML dashboard in Downloads folder
-    generate_html_dashboard(downloads_base, svg_results, jpg_results)
+    # 3. Sweep speedsvg.svg
+    svg_input = r"C:\Users\zubair\Downloads\speedsvg.svg"
+    svg_dir_dl = downloads_base / "speedsvg"
+    svg_results = run_thickness_sweep(
+        input_file=svg_input,
+        output_dir=svg_dir_dl,
+        thresholds=thresholds,
+        color=(0, 255, 255),  # Cyan
+        is_svg=True,
+        dataset_name="speedsvg",
+    )
 
-    # 4. Mirror everything into workspace_base
+    # 4. Generate multi-dataset HTML dashboard
+    dataset_configs = [
+        {
+            "key": "another_speed",
+            "name": "another_speed.jpg (Solid Silhouette)",
+            "filename": "another_speed.jpg",
+            "mode": "Raster Vectorized (VTracer)",
+            "results": another_results,
+        },
+        {
+            "key": "speedstars",
+            "name": "speedstars.jpg (Outline Silhouette)",
+            "filename": "speedstars.jpg",
+            "mode": "Raster Vectorized (VTracer)",
+            "results": jpg_results,
+        },
+        {
+            "key": "speedsvg",
+            "name": "speedsvg.svg (Direct SVG)",
+            "filename": "speedsvg.svg",
+            "mode": "SVG Direct (vpype)",
+            "results": svg_results,
+        },
+    ]
+
+    generate_html_dashboard(downloads_base, dataset_configs)
+
+    # 5. Mirror everything into workspace_base
     print("\nMirroring comparison files to workspace output_comparison/...")
     if workspace_base.exists():
         shutil.rmtree(workspace_base)
@@ -638,4 +657,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

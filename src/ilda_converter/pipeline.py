@@ -9,7 +9,7 @@ Orchestrates the complete 4-stage conversion flow:
 """
 
 from pathlib import Path
-from typing import Optional, Tuple, Literal, Dict
+from typing import Optional, Tuple, Literal, Dict, Union
 import numpy as np
 
 from .vectorizer import Vectorizer, VectorizerType, preprocess_image
@@ -28,6 +28,11 @@ class ILDAConverter:
         simplify_tolerance: float = 1.0,
         path_merge_threshold: float = 0.5,
         line_thickness: float = 25.0,
+        text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
+        text_tolerance: Optional[float] = None,
+        bg_tolerance: Optional[float] = None,
+        text_line_thickness: Optional[float] = None,
+        bg_line_thickness: Optional[float] = None,
     ):
         """
         Initialize ILDA converter.
@@ -35,10 +40,15 @@ class ILDAConverter:
         Args:
             vectorizer_method: Vectorization strategy ('vtracer', 'centerline', 'potrace')
             galvo_config: Galvo scanner configuration
-            simplify_tolerance: Path simplification tolerance in mm (Ramer-Douglas-Peucker)
+            simplify_tolerance: Default path simplification tolerance in mm
             path_merge_threshold: Distance for merging adjacent segments in mm
             line_thickness: Max line thickness in pixels/units to collapse into single centerlines
                             (avoids double lines; 0 to disable)
+            text_roi: Text region of interest: 'auto', (ymin, ymax), (xmin, ymin, xmax, ymax), or None
+            text_tolerance: Simplification tolerance for text paths (default: 0.5mm)
+            bg_tolerance: Simplification tolerance for background paths (default: 3.5mm)
+            text_line_thickness: Ribbon collapse thickness for text (default: 0.0 to preserve font outlines)
+            bg_line_thickness: Ribbon collapse thickness for background (default: line_thickness)
         """
         self.vectorizer = Vectorizer(
             method=vectorizer_method,
@@ -49,9 +59,43 @@ class ILDAConverter:
             tolerance=simplify_tolerance,
             merge_threshold=path_merge_threshold,
             max_line_thickness=line_thickness,
+            text_roi=text_roi,
+            text_tolerance=text_tolerance,
+            bg_tolerance=bg_tolerance,
+            text_line_thickness=text_line_thickness,
+            bg_line_thickness=bg_line_thickness,
         )
         self.conditioner = GalvoConditioner(galvo_config)
         self.line_thickness = line_thickness
+        self.text_roi = text_roi
+        self.text_tolerance = text_tolerance
+        self.bg_tolerance = bg_tolerance
+        self.text_line_thickness = text_line_thickness
+        self.bg_line_thickness = bg_line_thickness
+
+    def _apply_overrides(
+        self,
+        line_thickness: Optional[float] = None,
+        text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
+        text_tolerance: Optional[float] = None,
+        bg_tolerance: Optional[float] = None,
+        text_line_thickness: Optional[float] = None,
+        bg_line_thickness: Optional[float] = None,
+    ):
+        """Apply parameter overrides to vectorizer and path optimizer."""
+        if line_thickness is not None:
+            self.optimizer.max_line_thickness = line_thickness
+            self.vectorizer.line_thickness = line_thickness
+        if text_roi is not None:
+            self.optimizer.text_roi = text_roi
+        if text_tolerance is not None:
+            self.optimizer.text_tolerance = text_tolerance
+        if bg_tolerance is not None:
+            self.optimizer.bg_tolerance = bg_tolerance
+        if text_line_thickness is not None:
+            self.optimizer.text_line_thickness = text_line_thickness
+        if bg_line_thickness is not None:
+            self.optimizer.bg_line_thickness = bg_line_thickness
 
     def convert(
         self,
@@ -64,28 +108,24 @@ class ILDAConverter:
         company_name: str = "CONVERTER",
         write_both: bool = False,
         line_thickness: Optional[float] = None,
+        text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
+        text_tolerance: Optional[float] = None,
+        bg_tolerance: Optional[float] = None,
+        text_line_thickness: Optional[float] = None,
+        bg_line_thickness: Optional[float] = None,
     ) -> Dict:
         """
         Convert raster image or SVG file to ILDA format (.ilda or .ild).
         Automatically detects SVG files to skip rasterization.
-
-        Args:
-            input_path: Path to input file (JPG, PNG, BMP, or SVG)
-            output_ilda_path: Path to write the file (.ilda or .ild)
-            color: Default RGB color tuple (0-255)
-            preprocess: Apply raster preprocessing (threshold, inversion)
-            threshold_method: Thresholding method if preprocessing
-            frame_name: ILDA frame name (up to 8 chars)
-            company_name: ILDA company name (up to 8 chars)
-            write_both: If True, writes both .ild (Pangolin Beyond) and .ilda files
-            line_thickness: Optional override for max line thickness to collapse double lines
-
-        Returns:
-            Dictionary with conversion statistics
         """
-        if line_thickness is not None:
-            self.optimizer.max_line_thickness = line_thickness
-            self.vectorizer.line_thickness = line_thickness
+        self._apply_overrides(
+            line_thickness=line_thickness,
+            text_roi=text_roi,
+            text_tolerance=text_tolerance,
+            bg_tolerance=bg_tolerance,
+            text_line_thickness=text_line_thickness,
+            bg_line_thickness=bg_line_thickness,
+        )
 
         path_obj = Path(input_path)
         if path_obj.suffix.lower() == ".svg":
@@ -97,6 +137,11 @@ class ILDAConverter:
                 company_name=company_name,
                 write_both=write_both,
                 line_thickness=line_thickness,
+                text_roi=text_roi,
+                text_tolerance=text_tolerance,
+                bg_tolerance=bg_tolerance,
+                text_line_thickness=text_line_thickness,
+                bg_line_thickness=bg_line_thickness,
             )
 
         return self.convert_raster(
@@ -109,6 +154,11 @@ class ILDAConverter:
             company_name=company_name,
             write_both=write_both,
             line_thickness=line_thickness,
+            text_roi=text_roi,
+            text_tolerance=text_tolerance,
+            bg_tolerance=bg_tolerance,
+            text_line_thickness=text_line_thickness,
+            bg_line_thickness=bg_line_thickness,
         )
 
     @staticmethod
@@ -145,17 +195,30 @@ class ILDAConverter:
         company_name: str = "CONVERTER",
         write_both: bool = False,
         line_thickness: Optional[float] = None,
+        text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
+        text_tolerance: Optional[float] = None,
+        bg_tolerance: Optional[float] = None,
+        text_line_thickness: Optional[float] = None,
+        bg_line_thickness: Optional[float] = None,
     ) -> Dict:
         """
         Directly convert an SVG vector file to ILDA format.
         Bypasses rasterization and runs path optimization and galvo conditioning.
         """
-        if line_thickness is not None:
-            self.optimizer.max_line_thickness = line_thickness
+        self._apply_overrides(
+            line_thickness=line_thickness,
+            text_roi=text_roi,
+            text_tolerance=text_tolerance,
+            bg_tolerance=bg_tolerance,
+            text_line_thickness=text_line_thickness,
+            bg_line_thickness=bg_line_thickness,
+        )
 
         print(f"Converting SVG: {svg_path} -> {output_ilda_path}")
         if self.optimizer.max_line_thickness > 0:
             print(f"  -> Ribbon collapse active (max thickness: {self.optimizer.max_line_thickness:.1f} px to prevent double lines)")
+        if self.optimizer.text_roi is not None:
+            print(f"  -> Text-aware ROI active (ROI: {self.optimizer.text_roi}, text_tol: {self.optimizer.text_tolerance}, bg_tol: {self.optimizer.bg_tolerance})")
 
         # Stage 1: Path Optimization & TSP reordering
         print("Stage 1: Optimizing paths & TSP sorting (vpype)...")
@@ -231,15 +294,29 @@ class ILDAConverter:
         company_name: str = "CONVERTER",
         write_both: bool = False,
         line_thickness: Optional[float] = None,
+        text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
+        text_tolerance: Optional[float] = None,
+        bg_tolerance: Optional[float] = None,
+        text_line_thickness: Optional[float] = None,
+        bg_line_thickness: Optional[float] = None,
     ) -> Dict:
         """
         Convert raster image to ILDA format through full 4-stage pipeline.
         """
-        if line_thickness is not None:
-            self.optimizer.max_line_thickness = line_thickness
-            self.vectorizer.line_thickness = line_thickness
+        self._apply_overrides(
+            line_thickness=line_thickness,
+            text_roi=text_roi,
+            text_tolerance=text_tolerance,
+            bg_tolerance=bg_tolerance,
+            text_line_thickness=text_line_thickness,
+            bg_line_thickness=bg_line_thickness,
+        )
 
         print(f"Converting raster: {image_path} -> {output_ilda_path}")
+        if self.optimizer.max_line_thickness > 0:
+            print(f"  -> Ribbon collapse active (max thickness: {self.optimizer.max_line_thickness:.1f} px to prevent double lines)")
+        if self.optimizer.text_roi is not None:
+            print(f"  -> Text-aware ROI active (ROI: {self.optimizer.text_roi}, text_tol: {self.optimizer.text_tolerance}, bg_tol: {self.optimizer.bg_tolerance})")
 
         # Stage 1: Preprocess (optional thresholding / cleanup)
         active_image_path = image_path
@@ -338,6 +415,11 @@ def convert_image(
     preprocess: bool = False,
     write_both: bool = False,
     line_thickness: float = 25.0,
+    text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
+    text_tolerance: Optional[float] = None,
+    bg_tolerance: Optional[float] = None,
+    text_line_thickness: Optional[float] = None,
+    bg_line_thickness: Optional[float] = None,
 ) -> Dict:
     """
     Convenience function to convert a raster image or SVG to ILDA (.ilda or .ild).
@@ -347,6 +429,11 @@ def convert_image(
         vectorizer_method=vectorizer,
         galvo_config=galvo_config,
         line_thickness=line_thickness,
+        text_roi=text_roi,
+        text_tolerance=text_tolerance,
+        bg_tolerance=bg_tolerance,
+        text_line_thickness=text_line_thickness,
+        bg_line_thickness=bg_line_thickness,
     )
     return converter.convert(
         image_path,
@@ -355,6 +442,11 @@ def convert_image(
         preprocess=preprocess,
         write_both=write_both,
         line_thickness=line_thickness,
+        text_roi=text_roi,
+        text_tolerance=text_tolerance,
+        bg_tolerance=bg_tolerance,
+        text_line_thickness=text_line_thickness,
+        bg_line_thickness=bg_line_thickness,
     )
 
 
@@ -366,17 +458,35 @@ def convert_svg(
     color: Tuple[int, int, int] = (255, 255, 255),
     write_both: bool = False,
     line_thickness: float = 25.0,
+    text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
+    text_tolerance: Optional[float] = None,
+    bg_tolerance: Optional[float] = None,
+    text_line_thickness: Optional[float] = None,
+    bg_line_thickness: Optional[float] = None,
 ) -> Dict:
     """
     Convenience function to directly convert an SVG to ILDA (.ilda or .ild).
     """
     galvo_config = GalvoConfig(pps=pps, target_fps=fps)
-    converter = ILDAConverter(galvo_config=galvo_config, line_thickness=line_thickness)
+    converter = ILDAConverter(
+        galvo_config=galvo_config,
+        line_thickness=line_thickness,
+        text_roi=text_roi,
+        text_tolerance=text_tolerance,
+        bg_tolerance=bg_tolerance,
+        text_line_thickness=text_line_thickness,
+        bg_line_thickness=bg_line_thickness,
+    )
     return converter.convert_svg(
         svg_path,
         output_path,
         color=color,
         write_both=write_both,
         line_thickness=line_thickness,
+        text_roi=text_roi,
+        text_tolerance=text_tolerance,
+        bg_tolerance=bg_tolerance,
+        text_line_thickness=text_line_thickness,
+        bg_line_thickness=bg_line_thickness,
     )
 
