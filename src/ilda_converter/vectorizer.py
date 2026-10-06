@@ -350,9 +350,13 @@ class Vectorizer:
             seg_lens = np.linalg.norm(np.diff(p, axis=0), axis=1)
             if np.sum(seg_lens) < 3.0:
                 continue
-            approx = cv2.approxPolyDP(p.astype(np.float32), self.simplify_tolerance, False)
+            is_closed = len(p) >= 3 and np.linalg.norm(p[0] - p[-1]) < 2.0
+            approx = cv2.approxPolyDP(p.astype(np.float32), self.simplify_tolerance, is_closed).reshape(-1, 2)
+            if is_closed and len(approx) >= 3:
+                # Ensure closed loop has identical start and end point
+                approx = np.vstack([approx, approx[:1]])
             if len(approx) >= 2:
-                simplified_paths.append(approx.reshape(-1, 2))
+                simplified_paths.append(approx)
 
         self._paths_to_svg(simplified_paths, output_path, img.shape)
 
@@ -373,9 +377,12 @@ class Vectorizer:
         for p in paths:
             if len(p) < 2:
                 continue
+            is_closed = len(p) >= 3 and np.linalg.norm(p[0] - p[-1]) < 1.0
             path_d = f"M {p[0][0]},{p[0][1]}"
             for pt in p[1:]:
                 path_d += f" L {pt[0]},{pt[1]}"
+            if is_closed:
+                path_d += " Z"
             svg_lines.append(
                 f'<path d="{path_d}" fill="none" stroke="black" stroke-width="1"/>'
             )

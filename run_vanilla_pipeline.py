@@ -61,7 +61,7 @@ def run_vanilla_pipeline():
         galvo_config=galvo_config,
         simplify_tolerance=1.0,
         path_merge_threshold=1.5,
-        line_thickness=25.0,  # Centerline extraction for all lines <= 25px
+        line_thickness=0.0,  # Centerline vectorizer extracts 1D skeletons directly (no ribbon collapse needed)
         merge_close_distance=0.0,  # No close line merging
     )
     

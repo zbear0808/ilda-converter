@@ -358,7 +358,17 @@ class ILDAConverter:
 
         # Stage 2: Path Optimization (TSP reordering, segment merging, collinear simplify)
         print("Stage 2: Optimizing path order (TSP via vpype)...")
-        optimized_paths, blanking_distance = self.optimizer.optimize_paths(paths)
+        # Centerline paths are already 1D medial skeletons with no double outlines.
+        # Bypass ribbon collapse to preserve true enclosed loops and character counters (e.g. 'e', 'a').
+        if self.vectorizer.method == "centerline" and self.optimizer.max_line_thickness > 0:
+            saved_thickness = self.optimizer.max_line_thickness
+            self.optimizer.max_line_thickness = 0.0
+            try:
+                optimized_paths, blanking_distance = self.optimizer.optimize_paths(paths)
+            finally:
+                self.optimizer.max_line_thickness = saved_thickness
+        else:
+            optimized_paths, blanking_distance = self.optimizer.optimize_paths(paths)
         print(f"  -> Optimized to {len(optimized_paths)} paths")
         print(f"  -> Total blanking jump distance: {blanking_distance:.1f} units")
 
