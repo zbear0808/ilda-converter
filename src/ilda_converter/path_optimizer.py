@@ -9,7 +9,7 @@ thick stroke ribbons into clean single-stroke centerlines.
 from pathlib import Path
 from typing import List, Tuple, Optional, Union
 import numpy as np
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point
 
 
 class PathOptimizer:
@@ -246,12 +246,12 @@ class PathOptimizer:
         import vpype_cli
 
         posix_path = Path(svg_path).as_posix()
-        # Read raw SVG lines with vpype
+        # Read raw SVG lines with vpype (all layers)
         doc = vpype_cli.execute(f"read '{posix_path}'")
-        raw_lc = doc.layers.get(1, vpype.LineCollection())
         raw_paths = [
             np.column_stack([line.real, line.imag])
-            for line in raw_lc
+            for lc in doc.layers.values()
+            for line in lc
             if len(line) >= 2
         ]
 
@@ -478,6 +478,33 @@ class PathOptimizer:
         s1 = LineString(p1)
         s2 = LineString(p2)
 
+        l1 = s1.length
+        l2 = s2.length
+        n_samples = max(num_samples, max(len(p1), len(p2)))
+
+        p1_closed = np.linalg.norm(p1[0] - p1[-1]) < 2.0
+        p2_closed = np.linalg.norm(p2[0] - p2[-1]) < 2.0
+
+        if p1_closed and p2_closed and l1 > 1e-3 and l2 > 1e-3:
+            # Closed-loop seam projection: align start of loop 2 to closest projection of loop 1 start
+            proj_dist = s2.project(Point(p1[0]))
+
+            # Check matching traversal direction (clockwise vs counter-clockwise)
+            test_fwd = (proj_dist + 0.25 * l2) % l2
+            test_rev = (proj_dist - 0.25 * l2 + l2) % l2
+            d_fwd = Point(s1.interpolate(0.25 * l1)).distance(Point(s2.interpolate(test_fwd)))
+            d_rev = Point(s1.interpolate(0.25 * l1)).distance(Point(s2.interpolate(test_rev)))
+            s_dir = 1.0 if d_fwd <= d_rev else -1.0
+
+            t_vals = np.linspace(0, 1, n_samples)
+            pts1 = np.array([s1.interpolate(t * l1).coords[0] for t in t_vals])
+            pts2 = np.array([s2.interpolate((proj_dist + s_dir * t * l2 + l2) % l2).coords[0] for t in t_vals])
+
+            merged = (pts1 + pts2) / 2.0
+            merged[-1] = merged[0]
+            return merged
+
+        # Open paths orientation alignment
         d_same = np.linalg.norm(p1[0] - p2[0])
         d_rev = np.linalg.norm(p1[0] - p2[-1])
 
@@ -485,18 +512,11 @@ class PathOptimizer:
             p2 = p2[::-1]
             s2 = LineString(p2)
 
-        l1 = s1.length
-        l2 = s2.length
-
-        n_samples = max(num_samples, max(len(p1), len(p2)))
         t_vals = np.linspace(0, 1, n_samples)
         pts1 = np.array([s1.interpolate(t * l1).coords[0] for t in t_vals])
         pts2 = np.array([s2.interpolate(t * l2).coords[0] for t in t_vals])
 
         merged = (pts1 + pts2) / 2.0
-
-        p1_closed = np.linalg.norm(p1[0] - p1[-1]) < 2.0
-        p2_closed = np.linalg.norm(p2[0] - p2[-1]) < 2.0
         if p1_closed or p2_closed:
             merged[-1] = merged[0]
 

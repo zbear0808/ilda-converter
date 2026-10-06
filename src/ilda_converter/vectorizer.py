@@ -173,14 +173,40 @@ class Vectorizer:
             output_svg_path = svg_file.name
             svg_file.close()
 
-        if self.method == "vtracer":
-            self._vectorize_vtracer(image_path, output_svg_path)
-        elif self.method == "potrace":
-            self._vectorize_potrace(image_path, output_svg_path)
-        elif self.method == "centerline":
-            self._vectorize_centerline(image_path, output_svg_path)
-        else:
-            raise ValueError(f"Unknown vectorization method: {self.method}")
+        active_image_path = image_path
+        temp_rgb_path = None
+        try:
+            with Image.open(image_path) as im:
+                if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+                    white_bg = Image.new("RGB", im.size, (255, 255, 255))
+                    if im.mode == "RGBA":
+                        white_bg.paste(im, mask=im.split()[3])
+                    else:
+                        rgba = im.convert("RGBA")
+                        white_bg.paste(rgba, mask=rgba.split()[3])
+                    temp_rgb = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                    temp_rgb_path = temp_rgb.name
+                    temp_rgb.close()
+                    white_bg.save(temp_rgb_path)
+                    active_image_path = temp_rgb_path
+        except Exception:
+            pass
+
+        try:
+            if self.method == "vtracer":
+                self._vectorize_vtracer(active_image_path, output_svg_path)
+            elif self.method == "potrace":
+                self._vectorize_potrace(active_image_path, output_svg_path)
+            elif self.method == "centerline":
+                self._vectorize_centerline(active_image_path, output_svg_path)
+            else:
+                raise ValueError(f"Unknown vectorization method: {self.method}")
+        finally:
+            if temp_rgb_path and Path(temp_rgb_path).exists():
+                try:
+                    Path(temp_rgb_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
 
         # Parse SVG to coordinate arrays
         paths = self._parse_svg_paths(output_svg_path)
@@ -362,9 +388,9 @@ class Vectorizer:
 
             posix_path = Path(svg_path).as_posix()
             doc = vpype_cli.execute(f"read '{posix_path}'")
-            lc = doc.layers.get(1, vpype.LineCollection())
             paths = [
                 np.column_stack([line.real, line.imag])
+                for lc in doc.layers.values()
                 for line in lc
                 if len(line) >= 2
             ]
@@ -431,9 +457,24 @@ def preprocess_image(
     Returns:
         Path to preprocessed image
     """
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
+    img_raw = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+    if img_raw is None:
         raise ValueError(f"Could not load image: {image_path}")
+
+    if len(img_raw.shape) == 3 and img_raw.shape[2] == 4:
+        # Alpha compositing onto white
+        b, g, r, a = cv2.split(img_raw)
+        alpha = a.astype(float) / 255.0
+        white = np.ones_like(b, dtype=float) * 255.0
+        b_comp = (b.astype(float) * alpha + white * (1.0 - alpha)).astype(np.uint8)
+        g_comp = (g.astype(float) * alpha + white * (1.0 - alpha)).astype(np.uint8)
+        r_comp = (r.astype(float) * alpha + white * (1.0 - alpha)).astype(np.uint8)
+        comp = cv2.merge([b_comp, g_comp, r_comp])
+        img = cv2.cvtColor(comp, cv2.COLOR_BGR2GRAY)
+    elif len(img_raw.shape) == 3:
+        img = cv2.cvtColor(img_raw, cv2.COLOR_BGR2GRAY)
+    else:
+        img = img_raw
 
     if threshold_method == "otsu":
         _, binary = cv2.threshold(
