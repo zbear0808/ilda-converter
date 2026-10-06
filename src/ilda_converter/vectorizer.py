@@ -291,9 +291,23 @@ class Vectorizer:
         If line_thickness is set, strokes <= line_thickness become single centerlines,
         while regions > line_thickness keep their outer boundaries.
         """
-        img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        if img is None:
+        img_raw = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+        if img_raw is None:
             raise ValueError(f"Could not load image: {image_path}")
+
+        if len(img_raw.shape) == 3 and img_raw.shape[2] == 4:
+            b, g, r, a = cv2.split(img_raw)
+            alpha = a.astype(float) / 255.0
+            white = np.ones_like(b, dtype=float) * 255.0
+            b_comp = (b.astype(float) * alpha + white * (1.0 - alpha)).astype(np.uint8)
+            g_comp = (g.astype(float) * alpha + white * (1.0 - alpha)).astype(np.uint8)
+            r_comp = (r.astype(float) * alpha + white * (1.0 - alpha)).astype(np.uint8)
+            comp = cv2.merge([b_comp, g_comp, r_comp])
+            img = cv2.cvtColor(comp, cv2.COLOR_BGR2GRAY)
+        elif len(img_raw.shape) == 3:
+            img = cv2.cvtColor(img_raw, cv2.COLOR_BGR2GRAY)
+        else:
+            img = img_raw
 
         _, binary = cv2.threshold(
             img, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
@@ -328,13 +342,17 @@ class Vectorizer:
             skel = morphology.skeletonize(binary_bool)
             paths = trace_skeleton(skel)
 
-        # Simplify extracted paths
+        # Simplify extracted paths and prune micro-spurs (< 3px)
         simplified_paths = []
         for p in paths:
             if len(p) < 2:
                 continue
+            seg_lens = np.linalg.norm(np.diff(p, axis=0), axis=1)
+            if np.sum(seg_lens) < 3.0:
+                continue
             approx = cv2.approxPolyDP(p.astype(np.float32), self.simplify_tolerance, False)
-            simplified_paths.append(approx.reshape(-1, 2))
+            if len(approx) >= 2:
+                simplified_paths.append(approx.reshape(-1, 2))
 
         self._paths_to_svg(simplified_paths, output_path, img.shape)
 

@@ -51,9 +51,9 @@ Examples:
     parser.add_argument(
         "-v",
         "--vectorizer",
-        choices=["vtracer", "centerline", "potrace"],
-        default="vtracer",
-        help="Vectorization method (default: vtracer)",
+        choices=["centerline", "vtracer", "potrace"],
+        default="centerline",
+        help="Vectorization method (default: centerline)",
     )
 
     parser.add_argument(

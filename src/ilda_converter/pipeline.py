@@ -23,7 +23,7 @@ class ILDAConverter:
 
     def __init__(
         self,
-        vectorizer_method: VectorizerType = "vtracer",
+        vectorizer_method: VectorizerType = "centerline",
         galvo_config: Optional[GalvoConfig] = None,
         simplify_tolerance: float = 1.0,
         path_merge_threshold: float = 0.5,
@@ -426,7 +426,7 @@ class ILDAConverter:
 def convert_image(
     image_path: str,
     output_path: str,
-    vectorizer: VectorizerType = "vtracer",
+    vectorizer: VectorizerType = "centerline",
     pps: int = 30000,
     fps: int = 30,
     color: Tuple[int, int, int] = (255, 255, 255),

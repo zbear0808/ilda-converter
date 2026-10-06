@@ -55,13 +55,13 @@ def run_vanilla_pipeline():
         loop_to_start=True,
     )
     
-    # Standard vanilla converter
+    # Standard vanilla converter (using default centerline vectorizer)
     converter = ILDAConverter(
-        vectorizer_method="vtracer",
+        vectorizer_method="centerline",
         galvo_config=galvo_config,
         simplify_tolerance=1.0,
-        path_merge_threshold=0.5,
-        line_thickness=25.0,  # Standard ribbon collapse for single centerlines
+        path_merge_threshold=1.5,
+        line_thickness=25.0,  # Centerline extraction for all lines <= 25px
         merge_close_distance=0.0,  # No close line merging
     )
     
