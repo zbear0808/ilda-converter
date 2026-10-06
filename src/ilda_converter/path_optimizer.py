@@ -142,11 +142,13 @@ class PathOptimizer:
                 text_thk = self.text_line_thickness if self.text_line_thickness is not None else 0.0
                 bg_thk = self.bg_line_thickness if self.bg_line_thickness is not None else self.max_line_thickness
 
+                bg_close_dist = self.bg_merge_close_distance if self.bg_merge_close_distance is not None else self.merge_close_distance
                 # 1. Background optimization: strong simplification + streak ribbon collapsing
                 opt_bg = PathOptimizer(
                     tolerance=bg_tol,
                     merge_threshold=self.merge_threshold,
                     max_line_thickness=bg_thk,
+                    merge_close_distance=bg_close_dist,
                 )
                 bg_opt, _ = opt_bg.optimize_paths(bg_paths)
 
@@ -155,6 +157,7 @@ class PathOptimizer:
                     tolerance=text_tol,
                     merge_threshold=min(self.merge_threshold, 0.3),
                     max_line_thickness=text_thk,
+                    merge_close_distance=0.0,
                 )
                 text_opt, _ = opt_text.optimize_paths(text_paths)
 
@@ -186,6 +189,9 @@ class PathOptimizer:
         # Standard uniform pipeline
         if self.max_line_thickness > 0:
             valid_paths = self.collapse_ribbons(valid_paths, self.max_line_thickness)
+
+        if self.merge_close_distance > 0:
+            valid_paths = self.merge_close_paths(valid_paths, self.merge_close_distance)
 
         try:
             import vpype
@@ -359,4 +365,152 @@ class PathOptimizer:
             total_dist += dist
 
         return total_dist
+
+    @classmethod
+    def merge_close_paths(
+        cls,
+        paths: List[np.ndarray],
+        max_distance: float,
+        num_samples: int = 50,
+    ) -> List[np.ndarray]:
+        """
+        Iteratively find pairs of separate paths that run closer than max_distance
+        and merge them into single midline paths.
+
+        Args:
+            paths: List of Nx2 coordinate arrays
+            max_distance: Maximum distance threshold for merging nearby paths
+            num_samples: Number of sample points for interpolation and averaging
+
+        Returns:
+            List of merged paths
+        """
+        if max_distance <= 0:
+            return paths
+
+        current_paths = [p for p in paths if len(p) >= 2]
+        merged_any = True
+
+        while merged_any:
+            merged_any = False
+            n = len(current_paths)
+            merged_indices = set()
+            new_paths = []
+
+            for i in range(n):
+                if i in merged_indices:
+                    continue
+
+                best_j = None
+                best_dist = float("inf")
+
+                for j in range(i + 1, n):
+                    if j in merged_indices:
+                        continue
+
+                    p1 = current_paths[i]
+                    p2 = current_paths[j]
+
+                    if cls._are_lines_close(p1, p2, max_distance):
+                        s1 = LineString(p1)
+                        s2 = LineString(p2)
+                        d = s1.distance(s2)
+                        if d < best_dist:
+                            best_dist = d
+                            best_j = j
+
+                if best_j is not None:
+                    m = cls._merge_two_lines(
+                        current_paths[i], current_paths[best_j], num_samples=num_samples
+                    )
+                    new_paths.append(m)
+                    merged_indices.add(i)
+                    merged_indices.add(best_j)
+                    merged_any = True
+                else:
+                    new_paths.append(current_paths[i])
+
+            current_paths = new_paths
+
+        return current_paths
+
+    @staticmethod
+    def _are_lines_close(
+        p1: np.ndarray,
+        p2: np.ndarray,
+        max_distance: float,
+        num_samples: int = 25,
+    ) -> bool:
+        """Check if two lines run alongside each other within max_distance."""
+        s1 = LineString(p1)
+        s2 = LineString(p2)
+
+        # Fast minimum distance check
+        if s1.distance(s2) > max_distance:
+            return False
+
+        l1 = s1.length
+        l2 = s2.length
+        if l1 < 1e-3 or l2 < 1e-3:
+            return False
+
+        ratio = max(l1, l2) / min(l1, l2)
+        if ratio > 3.0:
+            return False
+
+        t_vals = np.linspace(0, 1, num_samples)
+        dists_1_to_2 = [s2.distance(s1.interpolate(t * l1)) for t in t_vals]
+        dists_2_to_1 = [s1.distance(s2.interpolate(t * l2)) for t in t_vals]
+
+        mean_dist = (np.mean(dists_1_to_2) + np.mean(dists_2_to_1)) / 2.0
+        frac_close_1 = np.mean(np.array(dists_1_to_2) <= max_distance * 1.5)
+        frac_close_2 = np.mean(np.array(dists_2_to_1) <= max_distance * 1.5)
+
+        return bool(mean_dist <= max_distance and frac_close_1 >= 0.8 and frac_close_2 >= 0.8)
+
+    @staticmethod
+    def _merge_two_lines(
+        p1: np.ndarray,
+        p2: np.ndarray,
+        num_samples: int = 50,
+    ) -> np.ndarray:
+        """Merge two lines running alongside each other into their average centerline."""
+        s1 = LineString(p1)
+        s2 = LineString(p2)
+
+        d_same = np.linalg.norm(p1[0] - p2[0])
+        d_rev = np.linalg.norm(p1[0] - p2[-1])
+
+        if d_rev < d_same:
+            p2 = p2[::-1]
+            s2 = LineString(p2)
+
+        l1 = s1.length
+        l2 = s2.length
+
+        n_samples = max(num_samples, max(len(p1), len(p2)))
+        t_vals = np.linspace(0, 1, n_samples)
+        pts1 = np.array([s1.interpolate(t * l1).coords[0] for t in t_vals])
+        pts2 = np.array([s2.interpolate(t * l2).coords[0] for t in t_vals])
+
+        merged = (pts1 + pts2) / 2.0
+
+        p1_closed = np.linalg.norm(p1[0] - p1[-1]) < 2.0
+        p2_closed = np.linalg.norm(p2[0] - p2[-1]) < 2.0
+        if p1_closed or p2_closed:
+            merged[-1] = merged[0]
+
+        return merged
+
+
+def merge_close_paths(
+    paths: List[np.ndarray],
+    max_distance: float,
+    num_samples: int = 50,
+) -> List[np.ndarray]:
+    """
+    Convenience function to merge paths closer than max_distance into single centerlines.
+    """
+    return PathOptimizer.merge_close_paths(paths, max_distance=max_distance, num_samples=num_samples)
+
 

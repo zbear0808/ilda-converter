@@ -106,6 +106,55 @@ Examples:
     )
 
     parser.add_argument(
+        "--line-thickness",
+        type=float,
+        default=25.0,
+        help="Max line thickness in pixels to collapse ribbons into single centerlines (default: 25.0, 0 to disable)",
+    )
+
+    parser.add_argument(
+        "--merge-close-distance",
+        type=float,
+        default=0.0,
+        help="Max distance in units to merge separate nearby parallel lines into a single centerline (default: 0, 0 to disable)",
+    )
+
+    parser.add_argument(
+        "--text-roi",
+        type=str,
+        default=None,
+        help="Region of interest for text: 'auto', 'ymin,ymax', or 'xmin,ymin,xmax,ymax' in 0.0-1.0 coords (default: None)",
+    )
+
+    parser.add_argument(
+        "--text-simplify",
+        type=float,
+        default=0.5,
+        help="Simplification tolerance for text paths in mm (default: 0.5)",
+    )
+
+    parser.add_argument(
+        "--bg-simplify",
+        type=float,
+        default=3.5,
+        help="Simplification tolerance for background paths in mm (default: 3.5)",
+    )
+
+    parser.add_argument(
+        "--text-thickness",
+        type=float,
+        default=0.0,
+        help="Ribbon collapse thickness for text (default: 0.0 to preserve font outlines)",
+    )
+
+    parser.add_argument(
+        "--bg-thickness",
+        type=float,
+        default=None,
+        help="Ribbon collapse thickness for background (default: matches --line-thickness)",
+    )
+
+    parser.add_argument(
         "--frame-name",
         type=str,
         default="FRAME",
@@ -146,6 +195,25 @@ Examples:
         )
         sys.exit(1)
 
+    # Parse text ROI
+    text_roi = None
+    if args.text_roi:
+        if args.text_roi.lower() == "auto":
+            text_roi = "auto"
+        else:
+            try:
+                parts = tuple(map(float, args.text_roi.split(",")))
+                if len(parts) in (2, 4):
+                    text_roi = parts
+                else:
+                    raise ValueError
+            except ValueError:
+                print(
+                    "Error: Invalid text-roi format. Use 'auto', 'ymin,ymax', or 'xmin,ymin,xmax,ymax'",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
     # Build galvo config
     galvo_config = GalvoConfig(
         pps=args.pps,
@@ -159,6 +227,13 @@ Examples:
             vectorizer_method=args.vectorizer,
             galvo_config=galvo_config,
             simplify_tolerance=args.simplify,
+            line_thickness=args.line_thickness,
+            merge_close_distance=args.merge_close_distance,
+            text_roi=text_roi,
+            text_tolerance=args.text_simplify,
+            bg_tolerance=args.bg_simplify,
+            text_line_thickness=args.text_thickness,
+            bg_line_thickness=args.bg_thickness,
         )
 
         stats = converter.convert(
@@ -170,6 +245,13 @@ Examples:
             frame_name=args.frame_name,
             company_name=args.company_name,
             write_both=args.both,
+            line_thickness=args.line_thickness,
+            merge_close_distance=args.merge_close_distance,
+            text_roi=text_roi,
+            text_tolerance=args.text_simplify,
+            bg_tolerance=args.bg_simplify,
+            text_line_thickness=args.text_thickness,
+            bg_line_thickness=args.bg_thickness,
         )
 
         # Print summary

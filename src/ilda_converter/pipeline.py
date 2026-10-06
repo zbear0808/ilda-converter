@@ -28,6 +28,7 @@ class ILDAConverter:
         simplify_tolerance: float = 1.0,
         path_merge_threshold: float = 0.5,
         line_thickness: float = 25.0,
+        merge_close_distance: float = 0.0,
         text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
         text_tolerance: Optional[float] = None,
         bg_tolerance: Optional[float] = None,
@@ -44,6 +45,8 @@ class ILDAConverter:
             path_merge_threshold: Distance for merging adjacent segments in mm
             line_thickness: Max line thickness in pixels/units to collapse into single centerlines
                             (avoids double lines; 0 to disable)
+            merge_close_distance: Max distance in units to merge separate nearby parallel lines
+                                  into a single centerline (0 to disable)
             text_roi: Text region of interest: 'auto', (ymin, ymax), (xmin, ymin, xmax, ymax), or None
             text_tolerance: Simplification tolerance for text paths (default: 0.5mm)
             bg_tolerance: Simplification tolerance for background paths (default: 3.5mm)
@@ -59,6 +62,7 @@ class ILDAConverter:
             tolerance=simplify_tolerance,
             merge_threshold=path_merge_threshold,
             max_line_thickness=line_thickness,
+            merge_close_distance=merge_close_distance,
             text_roi=text_roi,
             text_tolerance=text_tolerance,
             bg_tolerance=bg_tolerance,
@@ -67,6 +71,7 @@ class ILDAConverter:
         )
         self.conditioner = GalvoConditioner(galvo_config)
         self.line_thickness = line_thickness
+        self.merge_close_distance = merge_close_distance
         self.text_roi = text_roi
         self.text_tolerance = text_tolerance
         self.bg_tolerance = bg_tolerance
@@ -76,6 +81,7 @@ class ILDAConverter:
     def _apply_overrides(
         self,
         line_thickness: Optional[float] = None,
+        merge_close_distance: Optional[float] = None,
         text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
         text_tolerance: Optional[float] = None,
         bg_tolerance: Optional[float] = None,
@@ -86,6 +92,8 @@ class ILDAConverter:
         if line_thickness is not None:
             self.optimizer.max_line_thickness = line_thickness
             self.vectorizer.line_thickness = line_thickness
+        if merge_close_distance is not None:
+            self.optimizer.merge_close_distance = merge_close_distance
         if text_roi is not None:
             self.optimizer.text_roi = text_roi
         if text_tolerance is not None:
@@ -108,6 +116,7 @@ class ILDAConverter:
         company_name: str = "CONVERTER",
         write_both: bool = False,
         line_thickness: Optional[float] = None,
+        merge_close_distance: Optional[float] = None,
         text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
         text_tolerance: Optional[float] = None,
         bg_tolerance: Optional[float] = None,
@@ -120,6 +129,7 @@ class ILDAConverter:
         """
         self._apply_overrides(
             line_thickness=line_thickness,
+            merge_close_distance=merge_close_distance,
             text_roi=text_roi,
             text_tolerance=text_tolerance,
             bg_tolerance=bg_tolerance,
@@ -195,6 +205,7 @@ class ILDAConverter:
         company_name: str = "CONVERTER",
         write_both: bool = False,
         line_thickness: Optional[float] = None,
+        merge_close_distance: Optional[float] = None,
         text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
         text_tolerance: Optional[float] = None,
         bg_tolerance: Optional[float] = None,
@@ -207,6 +218,7 @@ class ILDAConverter:
         """
         self._apply_overrides(
             line_thickness=line_thickness,
+            merge_close_distance=merge_close_distance,
             text_roi=text_roi,
             text_tolerance=text_tolerance,
             bg_tolerance=bg_tolerance,
@@ -217,6 +229,8 @@ class ILDAConverter:
         print(f"Converting SVG: {svg_path} -> {output_ilda_path}")
         if self.optimizer.max_line_thickness > 0:
             print(f"  -> Ribbon collapse active (max thickness: {self.optimizer.max_line_thickness:.1f} px to prevent double lines)")
+        if self.optimizer.merge_close_distance > 0:
+            print(f"  -> Close line merge active (merge distance: {self.optimizer.merge_close_distance:.1f} units)")
         if self.optimizer.text_roi is not None:
             print(f"  -> Text-aware ROI active (ROI: {self.optimizer.text_roi}, text_tol: {self.optimizer.text_tolerance}, bg_tol: {self.optimizer.bg_tolerance})")
 
@@ -294,6 +308,7 @@ class ILDAConverter:
         company_name: str = "CONVERTER",
         write_both: bool = False,
         line_thickness: Optional[float] = None,
+        merge_close_distance: Optional[float] = None,
         text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
         text_tolerance: Optional[float] = None,
         bg_tolerance: Optional[float] = None,
@@ -305,6 +320,7 @@ class ILDAConverter:
         """
         self._apply_overrides(
             line_thickness=line_thickness,
+            merge_close_distance=merge_close_distance,
             text_roi=text_roi,
             text_tolerance=text_tolerance,
             bg_tolerance=bg_tolerance,
@@ -315,6 +331,8 @@ class ILDAConverter:
         print(f"Converting raster: {image_path} -> {output_ilda_path}")
         if self.optimizer.max_line_thickness > 0:
             print(f"  -> Ribbon collapse active (max thickness: {self.optimizer.max_line_thickness:.1f} px to prevent double lines)")
+        if self.optimizer.merge_close_distance > 0:
+            print(f"  -> Close line merge active (merge distance: {self.optimizer.merge_close_distance:.1f} units)")
         if self.optimizer.text_roi is not None:
             print(f"  -> Text-aware ROI active (ROI: {self.optimizer.text_roi}, text_tol: {self.optimizer.text_tolerance}, bg_tol: {self.optimizer.bg_tolerance})")
 
@@ -415,6 +433,7 @@ def convert_image(
     preprocess: bool = False,
     write_both: bool = False,
     line_thickness: float = 25.0,
+    merge_close_distance: float = 0.0,
     text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
     text_tolerance: Optional[float] = None,
     bg_tolerance: Optional[float] = None,
@@ -429,6 +448,7 @@ def convert_image(
         vectorizer_method=vectorizer,
         galvo_config=galvo_config,
         line_thickness=line_thickness,
+        merge_close_distance=merge_close_distance,
         text_roi=text_roi,
         text_tolerance=text_tolerance,
         bg_tolerance=bg_tolerance,
@@ -442,6 +462,7 @@ def convert_image(
         preprocess=preprocess,
         write_both=write_both,
         line_thickness=line_thickness,
+        merge_close_distance=merge_close_distance,
         text_roi=text_roi,
         text_tolerance=text_tolerance,
         bg_tolerance=bg_tolerance,
@@ -458,6 +479,7 @@ def convert_svg(
     color: Tuple[int, int, int] = (255, 255, 255),
     write_both: bool = False,
     line_thickness: float = 25.0,
+    merge_close_distance: float = 0.0,
     text_roi: Optional[Union[str, Tuple[float, ...]]] = None,
     text_tolerance: Optional[float] = None,
     bg_tolerance: Optional[float] = None,
@@ -471,6 +493,7 @@ def convert_svg(
     converter = ILDAConverter(
         galvo_config=galvo_config,
         line_thickness=line_thickness,
+        merge_close_distance=merge_close_distance,
         text_roi=text_roi,
         text_tolerance=text_tolerance,
         bg_tolerance=bg_tolerance,
@@ -483,6 +506,7 @@ def convert_svg(
         color=color,
         write_both=write_both,
         line_thickness=line_thickness,
+        merge_close_distance=merge_close_distance,
         text_roi=text_roi,
         text_tolerance=text_tolerance,
         bg_tolerance=bg_tolerance,

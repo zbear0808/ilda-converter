@@ -97,3 +97,100 @@ def test_full_pipeline_roundtrip():
     finally:
         Path(img_path).unlink(missing_ok=True)
         Path(ilda_path).unlink(missing_ok=True)
+
+
+def test_partition_paths_auto_and_custom():
+    """Test auto-detection and explicit partitioning of text vs background paths."""
+    from ilda_converter.path_optimizer import PathOptimizer
+
+    bg_path = np.array([
+        [0.0, 0.0], [1000.0, 0.0], [1000.0, 1000.0], [0.0, 1000.0], [0.0, 0.0]
+    ])
+
+    letter1 = np.array([[200.0, 450.0], [250.0, 450.0], [250.0, 550.0], [200.0, 550.0], [200.0, 450.0]])
+    letter2 = np.array([[300.0, 450.0], [350.0, 450.0], [350.0, 550.0], [300.0, 550.0], [300.0, 450.0]])
+    letter3 = np.array([[400.0, 450.0], [450.0, 450.0], [450.0, 550.0], [400.0, 550.0], [400.0, 450.0]])
+
+    all_paths = [bg_path, letter1, letter2, letter3]
+
+    text_paths, bg_paths, roi = PathOptimizer.partition_paths(all_paths, text_roi="auto")
+    assert len(text_paths) == 3
+    assert len(bg_paths) == 1
+    assert roi is not None
+    assert roi[0] < 0.5 < roi[1]
+
+    text_paths_exp, bg_paths_exp, _ = PathOptimizer.partition_paths(all_paths, text_roi=(0.4, 0.6))
+    assert len(text_paths_exp) == 3
+    assert len(bg_paths_exp) == 1
+
+    text_paths_none, bg_paths_none, _ = PathOptimizer.partition_paths(all_paths, text_roi=None)
+    assert len(text_paths_none) == 0
+    assert len(bg_paths_none) == 4
+
+
+def test_segmented_optimization():
+    """Test that segmented optimization simplifies background more aggressively than text."""
+    from ilda_converter.path_optimizer import PathOptimizer
+
+    x_bg = np.linspace(0, 1000, 100)
+    y_bg = 100.0 + 1.0 * np.sin(x_bg)
+    bg_path = np.column_stack([x_bg, y_bg])
+
+    t = np.linspace(0, 2 * np.pi, 50)
+    letter = np.column_stack([500.0 + 30.0 * np.cos(t), 500.0 + 30.0 * np.sin(t)])
+    letter2 = np.column_stack([600.0 + 30.0 * np.cos(t), 500.0 + 30.0 * np.sin(t)])
+
+    optimizer = PathOptimizer(
+        text_roi="auto",
+        text_tolerance=0.2,
+        bg_tolerance=5.0,
+        text_line_thickness=0.0,
+        bg_line_thickness=0.0,
+    )
+
+    opt_paths, _ = optimizer.optimize_paths([bg_path, letter, letter2])
+    assert len(opt_paths) >= 2
+
+    bg_out = [p for p in opt_paths if p[:, 1].max() < 200.0][0]
+    assert len(bg_out) < 20
+
+
+def test_merge_close_paths():
+    """Test merging nearby vector lines into single centerlines."""
+    from ilda_converter.path_optimizer import merge_close_paths
+
+    # Two parallel lines 6 units apart
+    x = np.linspace(0, 100, 40)
+    l1 = np.column_stack([x, np.zeros_like(x)])
+    l2 = np.column_stack([x, np.ones_like(x) * 6.0])
+
+    # A third line far away (50 units apart)
+    l3 = np.column_stack([x, np.ones_like(x) * 50.0])
+
+    merged = merge_close_paths([l1, l2, l3], max_distance=10.0)
+    assert len(merged) == 2  # l1 and l2 merged into 1, l3 remains separate
+
+    # The merged line should have mean Y ~ 3.0
+    merged_y = [p[:, 1].mean() for p in merged]
+    assert any(abs(y - 3.0) < 0.2 for y in merged_y)
+    assert any(abs(y - 50.0) < 0.2 for y in merged_y)
+
+
+def test_optimizer_with_close_line_merging():
+    """Test that PathOptimizer integrates close line merging into its pipeline."""
+    from ilda_converter.path_optimizer import PathOptimizer
+
+    x = np.linspace(0, 100, 30)
+    l1 = np.column_stack([x, np.zeros_like(x)])
+    l2 = np.column_stack([x, np.ones_like(x) * 4.0])
+
+    # Without merge_close_distance: 2 paths
+    opt_no_merge = PathOptimizer(tolerance=0.1, merge_close_distance=0.0, max_line_thickness=0.0)
+    paths_no_merge, _ = opt_no_merge.optimize_paths([l1, l2])
+    assert len(paths_no_merge) == 2
+
+    # With merge_close_distance: 1 path
+    opt_merge = PathOptimizer(tolerance=0.1, merge_close_distance=8.0, max_line_thickness=0.0)
+    paths_merge, _ = opt_merge.optimize_paths([l1, l2])
+    assert len(paths_merge) == 1
+

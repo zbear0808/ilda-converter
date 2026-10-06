@@ -11,7 +11,7 @@ Main pipeline:
 from .pipeline import ILDAConverter, convert_image, convert_svg
 from .ilda_writer import ILDAWriter, ILDAPoint, write_ilda_file, read_ilda_file
 from .vectorizer import Vectorizer, preprocess_image
-from .path_optimizer import PathOptimizer
+from .path_optimizer import PathOptimizer, merge_close_paths
 from .galvo_conditioner import GalvoConditioner, GalvoConfig, normalize_coordinates
 
 __version__ = "0.1.0"
@@ -27,6 +27,7 @@ __all__ = [
     "Vectorizer",
     "preprocess_image",
     "PathOptimizer",
+    "merge_close_paths",
     "GalvoConditioner",
     "GalvoConfig",
     "normalize_coordinates",
